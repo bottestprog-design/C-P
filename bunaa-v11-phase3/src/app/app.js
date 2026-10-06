@@ -71,6 +71,7 @@ export class App{
     $('pageSelect')?.addEventListener('change',event=>this.selectPage(event.target.value));
     $('pagePrev')?.addEventListener('click',()=>this.stepPage(-1));
     $('pageNext')?.addEventListener('click',()=>this.stepPage(1));
+    $('managePagesBtn')?.addEventListener('click',()=>this.panels.pagesModal());
 
     document.querySelectorAll('.device-btn').forEach(button=>{
       button.addEventListener('click',()=>this.store.setUI({device:button.dataset.device}));
