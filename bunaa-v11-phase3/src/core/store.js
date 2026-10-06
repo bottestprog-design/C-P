@@ -15,8 +15,9 @@ export class Store{
   redo(){const op=this.future.pop();if(!op)return false;this.history.push(op);this.project=deepClone(op.after);this.emit();this.persist();return true}
   subscribe(fn){this.subscribers.add(fn);return()=>this.subscribers.delete(fn)}
   emit(){for(const fn of this.subscribers)try{fn(this.project,this.ui)}catch(e){console.error(e)}}
-  setUI(patch){this.ui={...this.ui,...patch};try{localStorage.setItem(UI_KEY,JSON.stringify(this.ui))}catch{};this.emit()}
-  persistNow(){try{localStorage.setItem(STORAGE_KEY,JSON.stringify(this.project));}catch(e){this.ui.saveError=true;try{localStorage.removeItem(STORAGE_KEY)}catch{};console.warn('save failed',e)};this.emit()}
+  setUI(patch,{emit=true}={}){this.ui={...this.ui,...patch};try{localStorage.setItem(UI_KEY,JSON.stringify(this.ui))}catch(e){console.warn('UI save failed',e)};if(emit)this.emit()}
+  setProjectSetting(key,value){this.transact('تعديل إعداد المشروع',project=>{project.settings[key]=value})}
+  persistNow(){try{localStorage.setItem(STORAGE_KEY,JSON.stringify(this.project));this.ui.saveError=false;try{localStorage.setItem(UI_KEY,JSON.stringify(this.ui))}catch{}}catch(e){this.ui.saveError=true;console.warn('save failed',e)}}
   find(id){return findNodeGlobal(this.project,id)}
   activePage(){return this.project.pages.find(p=>p.id===this.project.activePageId)||this.project.pages[0]}
   nodeCount(){return countNodes(this.project)}
