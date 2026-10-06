@@ -1,0 +1,7 @@
+{
+  "name":"bunaa-v11-phase3",
+  "version":"11.3.0",
+  "private":true,
+  "type":"module",
+  "scripts":{"verify":"node verify.mjs","test":"node tests/test-suite.mjs"}
+}

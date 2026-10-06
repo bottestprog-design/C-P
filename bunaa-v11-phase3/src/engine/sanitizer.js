@@ -1,0 +1,3 @@
+export function sanitizeHtml(html=''){const box=document.createElement('div');box.innerHTML=String(html);box.querySelectorAll('script,style,iframe,object,embed,form').forEach(x=>x.remove());box.querySelectorAll('*').forEach(el=>{for(const a of [...el.attributes]){if(/^on/i.test(a.name))el.removeAttribute(a.name);if(a.name==='href'&&/^\s*(javascript:|vbscript:)/i.test(a.value))el.setAttribute('href','#')}});return box.innerHTML}
+export function safeUrl(url=''){const s=String(url).trim();if(/^javascript:/i.test(s)||/^vbscript:/i.test(s))return '#';return s||'#'}
+export function safeText(v=''){return String(v??'')}

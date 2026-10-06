@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#5b5ce2">
+  <title>بَنّاء — منشئ المواقع البصري</title>
+  <link rel="stylesheet" href="styles/app.css">
+</head>
+<body>
+  <div id="app" class="app-shell">
+    <section id="onboarding" class="onboarding-screen">
+      <div class="onboarding-bg"></div>
+      <div class="onboarding-card">
+        <div class="brand-row"><span class="brand-mark">ب</span><div><strong>بَنّاء</strong><small>منشئ المواقع البصري</small></div></div>
+        <div class="eyebrow">V11 • PHASE 3</div>
+        <h1>أنشئ موقعًا حقيقيًا<br><span>من فكرة إلى صفحة تعمل.</span></h1>
+        <p>اختر نقطة البداية، خصص العناصر، جرّب التفاعل، ثم عاين ونزّل المشروع.</p>
+        <div id="resumeProject" class="resume-card hidden">
+          <div><b>وجدنا مشروعًا محفوظًا</b><small id="resumeMeta"></small></div>
+          <button id="resumeBtn" class="secondary-btn">استعادة المشروع</button>
+        </div>
+        <div class="mode-grid">
+          <button class="mode-card" data-mode="normal">
+            <span class="mode-symbol">✦</span><span><b>مستخدم عادي</b><small>بناء مرئي بسيط بدون كود.</small></span><i>←</i>
+          </button>
+          <button class="mode-card trainee" data-mode="trainee">
+            <span class="mode-symbol mono">&lt;/&gt;</span><span><b>متدرب برمجة</b><small>البناء + الكود + مختبر تعليمي.</small></span><i>←</i>
+          </button>
+        </div>
+        <div class="feature-strip"><span>✓ قوالب جاهزة</span><span>✓ صفحات متعددة</span><span>✓ تفاعل مباشر</span><span>✓ تنزيل ZIP</span></div>
+      </div>
+    </section>
+
+    <section id="workspace" class="workspace hidden">
+      <header class="topbar">
+        <div class="top-group brand-group">
+          <button id="homeBtn" class="icon-btn" title="الرئيسية">⌂</button>
+          <div class="brand-mini"><span class="brand-mark small">ب</span><div><b>بَنّاء</b><small>V11</small></div></div>
+          <div class="project-switcher">
+            <button id="projectMenuBtn" class="select-btn"><span id="projectName">مشروعي</span><span>⌄</span></button>
+          </div>
+        </div>
+        <div class="top-group center-group">
+          <button id="undoBtn" class="tool-btn" title="تراجع">↶</button>
+          <button id="redoBtn" class="tool-btn" title="إعادة">↷</button>
+          <div class="page-switcher"><button id="pagePrev" class="tiny-icon">‹</button><select id="pageSelect"></select><button id="pageNext" class="tiny-icon">›</button></div><button id="managePagesBtn" class="link-btn">الصفحات</button>
+          <div class="device-switcher" aria-label="أجهزة المعاينة">
+            <button class="device-btn active" data-device="desktop">▣</button>
+            <button class="device-btn" data-device="tablet">▥</button>
+            <button class="device-btn" data-device="mobile">▤</button>
+          </div>
+          <button id="advancedDevicesBtn" class="link-btn">إعدادات الأجهزة</button>
+        </div>
+        <div class="top-group action-group">
+          <span id="saveStatus" class="save-status">● محفوظ</span>
+          <button id="leftToggle" class="outline-btn">☰ العناصر</button>
+          <button id="rightToggle" class="outline-btn">⚙ التخصيص</button>
+          <button id="previewBtn" class="outline-btn">▶ معاينة</button>
+          <button id="exportBtn" class="primary-btn">تنزيل</button>
+        </div>
+      </header>
+
+      <div class="workspace-main">
+        <aside id="leftDrawer" class="drawer left-drawer" aria-label="لوحة الأدوات">
+          <div class="drawer-header">
+            <div><span class="eyebrow">مساحة العمل</span><h2>أدوات البناء</h2></div>
+            <button id="leftClose" class="close-btn">×</button>
+          </div>
+          <nav class="drawer-tabs" aria-label="أقسام البناء">
+            <button class="drawer-tab active" data-left-tab="elements">العناصر</button>
+            <button class="drawer-tab" data-left-tab="layers">الطبقات</button>
+            <button class="drawer-tab" data-left-tab="interaction">التفاعل</button>
+          </nav>
+          <div class="drawer-content">
+            <section id="elementsView" class="left-view">
+              <div class="search-field"><span>⌕</span><input id="elementSearch" placeholder="ابحث عن عنصر…"></div>
+              <div id="categoryTabs" class="category-strip"></div>
+              <div id="elementLibrary" class="element-library"></div>
+              <div class="drawer-actions"><button id="openTemplatesBtn" class="soft-btn">✦ القوالب الجاهزة</button><button id="openAssetsBtn" class="soft-btn">▧ الوسائط</button></div>
+              <div class="tips-card"><b>طريقة العمل</b><p>اسحب أي عنصر إلى الشاشة، أو اضغط عليه لإضافته. بعد التحديد ستظهر خصائصه يمينًا.</p></div>
+            </section>
+            <section id="layersView" class="left-view hidden"><div class="view-title"><b>طبقات الصفحة</b><small>الترتيب الحقيقي لمحتوى الصفحة.</small></div><div id="layerTree" class="layer-tree"></div></section>
+            <section id="interactionView" class="left-view hidden"><div class="view-title"><b>التفاعل</b><small>ابدأ بتفاعل بسيط، ثم افتح التفاصيل عند الحاجة.</small></div><div id="interactionPanel" class="interaction-panel"></div></section>
+          </div>
+        </aside>
+        <button id="leftRail" class="drawer-rail left-rail" aria-label="فتح العناصر">☰</button>
+
+        <main class="canvas-area">
+          <div class="canvas-header">
+            <div><b id="canvasPageTitle">الرئيسية</b><small id="canvasModeLabel">وضع البناء</small></div>
+            <div class="canvas-tools">
+              <button id="structureBtn" class="mini-tool">◇ البنية</button>
+              <button id="gridBtn" class="mini-tool active">▦ الشبكة</button>
+              <button id="focusBtn" class="mini-tool">⛶ تركيز</button>
+              <span class="tool-divider"></span>
+              <button id="zoomOut" class="zoom-btn">−</button><span id="zoomLabel" class="zoom-label">100%</span><button id="zoomIn" class="zoom-btn">+</button><button id="zoomFit" class="mini-tool">ملاءمة</button>
+            </div>
+          </div>
+          <div id="canvasViewport" class="canvas-viewport">
+            <div id="canvasStage" class="canvas-stage">
+              <div class="stage-topline"><span>شاشة الموقع</span><span id="stageHint">اسحب / مرر / كبّر</span></div>
+              <div id="deviceFrame" class="site-frame desktop">
+                <div id="pageCanvas" class="page-canvas"></div>
+                <div id="dropEmpty" class="empty-drop hidden"><span>＋</span><b>أسقط العنصر هنا</b><small>أو اضغط على عنصر من القائمة اليسرى</small></div>
+                <div id="dropFooter" class="drop-footer">＋ اسحب عنصرًا جديدًا إلى نهاية الصفحة</div>
+              </div>
+            </div>
+          </div>
+          <div class="canvas-statusbar"><span id="selectionInfo">لم يتم تحديد عنصر</span><span>Ctrl/Cmd+K للأوامر • Ctrl/Cmd+S للحفظ</span></div>
+        </main>
+
+        <aside id="rightDrawer" class="drawer right-drawer" aria-label="لوحة التخصيص">
+          <div class="drawer-header"><div><span class="eyebrow">Inspector</span><h2 id="inspectorTitle">حدد عنصرًا</h2></div><button id="rightClose" class="close-btn">×</button></div>
+          <div id="inspectorEmpty" class="inspector-empty"><span>✦</span><b>اختر عنصرًا</b><p>اضغط على أي عنصر داخل الموقع لتظهر خصائصه هنا.</p></div>
+          <div id="inspector" class="inspector hidden"></div>
+        </aside>
+        <button id="rightRail" class="drawer-rail right-rail" aria-label="فتح التخصيص">⚙</button>
+      </div>
+
+      <footer class="statusbar"><div class="status-left"><span id="pageCountLabel">1 صفحة</span><span id="elementCountLabel">0 عنصر</span></div><div class="status-right"><button id="qualityBtn" class="status-btn">✓ فحص الجودة</button><button id="globalStyleBtn" class="status-btn">◈ النمط العام</button><button id="shortcutsBtn" class="status-btn">⌘ الاختصارات</button></div></footer>
+    </section>
+  </div>
+
+  <div id="modalHost"></div>
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>
