@@ -1,7 +1,8 @@
 export const clamp=(n,min,max)=>Math.min(max,Math.max(min,n));
 export const uid=(prefix='n')=>`${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2,9)}`;
-export const deepClone=o=>JSON.parse(JSON.stringify(o));
-export const slugify=(text='')=>String(text).trim().toLowerCase().replace(/[\u0600-\u06ff]/g,'').replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'')||`page-${Math.random().toString(36).slice(2,6)}`;
+export const deepClone=o=>{if(o===undefined)return undefined;if(typeof structuredClone==='function')return structuredClone(o);return JSON.parse(JSON.stringify(o))};
+export const slugify=(text='')=>{const value=String(text).normalize('NFKC').trim().toLowerCase();const slug=value.replace(/[^\\p{L}\\p{N}]+/gu,'-').replace(/^-+|-+$/g,'');return slug||`page-${Math.random().toString(36).slice(2,6)}`};
+export function safeUrl(url=''){const s=String(url??'').trim();if(!s||s==='#')return '#';if(/^(javascript|vbscript|data|file):/i.test(s))return '#';if(/^(https?:|mailto:|tel:)/i.test(s))return s;if(/^[/#.][^\\s]*$/.test(s)||/^[^:\\s]+(?:[/#][^\\s]*)?$/.test(s))return s;return '#';}
 export const escapeHtml=(s='')=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
 export const escapeAttr=escapeHtml;
 export function debounce(fn,wait=250){let t;return (...a)=>{clearTimeout(t);t=setTimeout(()=>fn(...a),wait)}}
