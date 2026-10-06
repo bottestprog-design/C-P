@@ -13,4 +13,6 @@ for(const d of definitions){const n=factory(d.type);assert.ok(n&&n.type===d.type
 const nested=project.pages[0].nodes.find(n=>n.children?.length);if(nested){const id=nested.children[0].id;assert.equal(findNodeGlobal(project,id).node.id,id)}
 const int=makeInteraction(project.pages[0].nodes[0].id,'click','motion',{motion:'fade'});project.interactions=[int];assert.equal(interactionsFor(project,int.sourceId).length,1);
 const broken=normalizeProject({...project,pages:[]});assert.equal(broken.pages.length,1);
+const duplicate=normalizeProject({...project,pages:[{...project.pages[0],id:'same',slug:'same'},{...project.pages[0],id:'same',slug:'same'}]});assert.notEqual(duplicate.pages[0].id,duplicate.pages[1].id);assert.notEqual(duplicate.pages[0].slug,duplicate.pages[1].slug);
+const orphan=normalizeProject({...project,interactions:[{id:'x',sourceId:'missing',options:{targetId:'missing'}}]});assert.equal(orphan.interactions.length,0);
 console.log(`PASS — unit/model tests (${definitions.length} components, ${templates.length} templates)`);
