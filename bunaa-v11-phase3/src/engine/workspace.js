@@ -65,9 +65,8 @@ export class WorkspaceEngine{
   toggleInteraction(on){this.store.setUI({interactionMode:Boolean(on)})}
   syncRuntime(){
     if(!this.store.ui.interactionMode){this.cleanupRuntime();this.runtimeKey='';return}
-    const key=JSON.stringify([this.store.project.activePageId,this.store.project.interactions]);
-    if(key===this.runtimeKey)return;
     this.cleanupRuntime();
+    const key=JSON.stringify([this.store.project.activePageId,this.store.project.interactions]);
     this.runtimeCleanup=createRuntime({
       document,project:this.store.project,
       navigate:id=>{
@@ -85,6 +84,7 @@ export class WorkspaceEngine{
   }
   render(){
     const page=this.activePage();if(!page||!this.pageCanvas)return;
+    if(this.store.ui.interactionMode)this.cleanupRuntime();
     renderPage(page,this.pageCanvas,{project:this.store.project,theme:this.store.project.theme,device:this.store.ui.device,selectedId:this.store.ui.interactionMode?null:this.store.ui.selected});
     this.deviceFrame.className=`site-frame ${this.store.ui.device}`;
     this.pageCanvas.classList.toggle('show-grid',Boolean(this.store.ui.grid));
