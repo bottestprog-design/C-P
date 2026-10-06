@@ -6,7 +6,7 @@ import {templates,materializeTemplate,validateTemplate} from './src/catalog/temp
 import {makeProject,normalizeProject,countNodes,walk} from './src/core/model.js';
 
 const root=path.dirname(fileURLToPath(import.meta.url));
-const required=['index.html','styles/app.css','src/main.js','src/app/app.js','src/core/model.js','src/core/store.js','src/core/commands.js','src/core/utils.js','src/catalog/components.js','src/catalog/templates.js','src/engine/renderer.js','src/engine/layout.js','src/engine/interaction.js','src/engine/exporter.js','src/ui/modal.js','src/ui/panels.js','src/ui/inspector.js','src/ui/dialogs.js','README.md','ARCHITECTURE.md','tests/test-suite.mjs'];
+const required=['index.html','styles/app.css','src/main.js','src/app/app.js','src/core/model.js','src/core/store.js','src/core/commands.js','src/core/utils.js','src/catalog/components.js','src/catalog/templates.js','src/engine/renderer.js','src/engine/layout.js','src/engine/interaction.js','src/engine/exporter.js','src/engine/sanitizer.js','src/engine/workspace.js','src/ui/modal.js','src/ui/panels.js','src/ui/inspector.js','src/ui/dialogs.js','README.md','ARCHITECTURE.md','tests/test-suite.mjs'];
 const errors=[];const ok=m=>console.log('✓',m);const fail=m=>{errors.push(m);console.error('✗',m)};
 for(const f of required)fs.existsSync(path.join(root,f))?ok(`file ${f}`):fail(`missing ${f}`);
 const html=fs.readFileSync(path.join(root,'index.html'),'utf8');
