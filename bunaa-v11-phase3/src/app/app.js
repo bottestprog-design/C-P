@@ -16,14 +16,11 @@ export class App{
     this.panels.engine=this.engine;
     this.dialogs=new Dialogs(this.store,this.engine,this.panels);
     this.booted=false;
+    this.unsubscribe=null;
   }
 
   start(){
     this.store.hydrate();
-    document.querySelectorAll('.mode-card').forEach(button=>{
-      button.addEventListener('click',()=>this.showWorkspace(button.dataset.mode||'normal'));
-    });
-    $('resumeBtn')?.addEventListener('click',()=>this.showWorkspace(this.store.ui.mode||'normal'));
     this.updateResume();
   }
 
@@ -49,13 +46,19 @@ export class App{
   boot(){
     if(this.booted)return;
     this.booted=true;
-    this.panels.mount();
-    this.inspector.mount($('inspector'));
-    this.engine.mount();
-    this.dialogs.bind();
-    this.bindGlobalUi();
-    this.store.subscribe(()=>this.render());
-    this.render();
+    try{
+      this.panels.mount();
+      this.inspector.mount($('inspector'));
+      this.engine.mount();
+      this.dialogs.bind();
+      this.bindGlobalUi();
+      this.unsubscribe=this.store.subscribe(()=>this.render());
+      this.render();
+    }catch(error){
+      this.booted=false;
+      console.error('Bunaa workspace boot failed',error);
+      throw error;
+    }
   }
 
   bindGlobalUi(){
@@ -72,11 +75,9 @@ export class App{
     $('pagePrev')?.addEventListener('click',()=>this.stepPage(-1));
     $('pageNext')?.addEventListener('click',()=>this.stepPage(1));
     $('managePagesBtn')?.addEventListener('click',()=>this.panels.pagesModal());
-
     document.querySelectorAll('.device-btn').forEach(button=>{
       button.addEventListener('click',()=>this.store.setUI({device:button.dataset.device}));
     });
-
     window.addEventListener('keydown',event=>this.keyboard(event));
     window.addEventListener('beforeunload',()=>this.store.persistNow());
     window.addEventListener('resize',()=>this.syncDrawers());
@@ -92,6 +93,7 @@ export class App{
     if(!this.store.project.pages.some(page=>page.id===id))return;
     this.store.setUI({selected:null},{emit:false});
     this.store.transact('فتح صفحة',project=>{project.activePageId=id},{record:false});
+    this.store.emit();
   }
 
   stepPage(direction){
