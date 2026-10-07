@@ -18,13 +18,13 @@
         <p>اختر نقطة البداية، خصص العناصر، جرّب التفاعل، ثم عاين ونزّل المشروع.</p>
         <div id="resumeProject" class="resume-card hidden">
           <div><b>وجدنا مشروعًا محفوظًا</b><small id="resumeMeta"></small></div>
-          <button id="resumeBtn" class="secondary-btn">استعادة المشروع</button>
+          <button type="button" id="resumeBtn" class="secondary-btn" onclick="window.__BUNAA_SELECT_MODE?.('resume')">استعادة المشروع</button>
         </div>
         <div class="mode-grid">
-          <button class="mode-card" data-mode="normal">
+          <button type="button" class="mode-card" data-mode="normal" onclick="window.__BUNAA_SELECT_MODE?.('normal')">
             <span class="mode-symbol">✦</span><span><b>مستخدم عادي</b><small>بناء مرئي بسيط بدون كود.</small></span><i>←</i>
           </button>
-          <button class="mode-card trainee" data-mode="trainee">
+          <button type="button" class="mode-card trainee" data-mode="trainee" onclick="window.__BUNAA_SELECT_MODE?.('trainee')">
             <span class="mode-symbol mono">&lt;/&gt;</span><span><b>متدرب برمجة</b><small>البناء + الكود + مختبر تعليمي.</small></span><i>←</i>
           </button>
         </div>
@@ -123,6 +123,6 @@
   </div>
 
   <div id="modalHost"></div>
-  <script type="module">import("./src/main.js").catch(error=>{console.error(error);const box=document.createElement("div");box.dir="rtl";box.style.cssText="position:fixed;inset:0;z-index:99999;background:#10131c;color:#fff;padding:32px;font:16px/1.7 system-ui;display:grid;place-content:center;text-align:center";box.innerHTML="<h2>تعذر تشغيل بَنّاء</h2><p>شغّل المشروع بواسطة start-local.bat بدل فتح index.html مباشرة.</p><pre style="max-width:800px;white-space:pre-wrap;color:#ffb4b4"></pre>";box.querySelector("pre").textContent=error?.stack||String(error);document.body.appendChild(box)});</script>
+  <script>window.__BUNAA_SELECT_MODE=function(mode){document.getElementById('onboarding')?.classList.add('hidden');document.getElementById('workspace')?.classList.remove('hidden');window.dispatchEvent(new CustomEvent('bunaa:select-mode',{detail:{mode}}));};</script><script type="module">import("./src/main.js").catch(error=>{console.error(error);const box=document.createElement("div");box.dir="rtl";box.style.cssText="position:fixed;inset:0;z-index:99999;background:#10131c;color:#fff;padding:32px;font:16px/1.7 system-ui;display:grid;place-content:center;text-align:center";box.innerHTML="<h2>تعذر تشغيل بَنّاء</h2><p>شغّل المشروع بواسطة start-local.bat بدل فتح index.html مباشرة.</p><pre style="max-width:800px;white-space:pre-wrap;color:#ffb4b4"></pre>";box.querySelector("pre").textContent=error?.stack||String(error);document.body.appendChild(box)});</script>
 </body>
 </html>
