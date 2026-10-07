@@ -1,0 +1,11 @@
+(function(w){
+'use strict';
+const U=w.Bunaa.Core,I={};
+I.events=[['click','عند النقر'],['dblclick','عند النقر مرتين'],['pointerover','عند المرور'],['focusin','عند التركيز']];
+I.actions=[['animate','حركة'],['show','إظهار'],['hide','إخفاء'],['toggle','تبديل الإظهار'],['navigate','الانتقال لصفحة'],['url','فتح رابط'],['text','تغيير النص']];
+I.findDom=(id,root=document)=>U.qa('[data-node-id]',root).find(x=>x.dataset.nodeId===id)||null;
+I.apply=(rule,node,dom,store)=>{if(!rule)return false;switch(rule.action){case'animate':{const effect=rule.effect||'pulse';dom.classList.remove('fx-'+effect);void dom.offsetWidth;dom.classList.add('fx-'+effect);return false}case'show':case'hide':case'toggle':{const target=I.findDom(rule.targetId)||dom;const visible=rule.action==='show'?true:rule.action==='hide'?false:target.classList.contains('runtime-hidden');target.classList.toggle('runtime-hidden',!visible);target.hidden=!visible;return false}case'text':store.commit('تغيير النص بالتفاعل',p=>{const n=I.find(p.pages.find(x=>x.id===p.activePageId)?.nodes,node.id);if(n)n.text=String(rule.value||'')});return true;case'navigate':{const p=store.project.pages.find(x=>x.id===rule.targetPageId);if(!p)return false;store.commit('الانتقال بالتفاعل',pr=>{pr.activePageId=p.id});store.setUi({selectedIds:[],preview:true});return true}case'url':{const url=U.safeUrl(rule.url);if(url!=='#')w.open(url,'_blank','noopener,noreferrer');return false}default:return false}};
+I.dispatch=(node,eventType,dom,store,event)=>{if(!store.ui.preview||!node)return false;const rules=(node.interactions||[]).filter(x=>x.event===eventType);let rerender=false;rules.forEach(rule=>{if(I.apply(rule,node,dom,store,event))rerender=true});return rerender};
+I.attach=(canvas,store,afterRender)=>{if(I._attached)return;I._attached=true;const on=(eventName,selector)=>canvas.addEventListener(eventName,e=>{if(!store.ui.preview)return;const dom=e.target.closest?.('.canvas-node');if(!dom||!canvas.contains(dom))return;const n=store.find(dom.dataset.nodeId);if(I.dispatch(n,eventName,dom,store,e)&&afterRender)afterRender()});on('click','.canvas-node');on('dblclick','.canvas-node');on('pointerover','.canvas-node');on('focusin','.canvas-node');};
+w.Bunaa.Interactions=I;
+})(window);

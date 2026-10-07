@@ -1,0 +1,23 @@
+(function(w){
+'use strict';
+const U={};
+U.uid=(prefix='id')=>`${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2,9)}`;
+U.clone=v=>v==null?v:JSON.parse(JSON.stringify(v));
+U.esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+U.safeUrl=v=>{const s=String(v??'').trim();if(!s||s==='#')return '#';if(/^(javascript|vbscript|data|file):/i.test(s))return '#';if(/^(https?:|mailto:|tel:|\/|\.|#)/i.test(s))return s;return '#'};
+U.num=(v,fallback=0)=>{const n=Number(v);return Number.isFinite(n)?n:fallback};
+U.clamp=(v,min,max)=>Math.min(max,Math.max(min,U.num(v,min)));
+U.get=id=>document.getElementById(id);
+U.q=(sel,root=document)=>root.querySelector(sel);U.qa=(sel,root=document)=>Array.from(root.querySelectorAll(sel));
+U.cssEscape=value=>w.CSS?.escape?CSS.escape(String(value)):String(value).replace(/[^a-zA-Z0-9_-]/g,c=>'\\'+c.charCodeAt(0).toString(16)+' ');
+U.download=(data,name,type='text/plain;charset=utf-8')=>{const blob=new Blob([data],{type}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),500)};
+U.memory=()=>w.__BUNAA_MEMORY__||(w.__BUNAA_MEMORY__={});
+U.readStore=key=>{try{return w.localStorage.getItem(key)}catch{return U.memory()[key]??null}};
+U.writeStore=(key,val)=>{try{w.localStorage.setItem(key,val)}catch{U.memory()[key]=val}};
+U.removeStore=key=>{try{w.localStorage.removeItem(key)}catch{delete U.memory()[key]}};
+U.isField=target=>!!target?.closest?.('input,textarea,select,[contenteditable="true"]');U.isInput=U.isField;
+U.debounce=(fn,wait=80)=>{let t;return(...args)=>{clearTimeout(t);t=setTimeout(()=>fn(...args),wait)}};
+U.pointInRect=(x,y,r)=>x>=r.left&&x<=r.right&&y>=r.top&&y<=r.bottom;
+U.rectFor=(el)=>{const r=el.getBoundingClientRect();return {left:r.left,top:r.top,right:r.right,bottom:r.bottom,width:r.width,height:r.height}};
+w.Bunaa=w.Bunaa||{};w.Bunaa.Core=U;
+})(window);

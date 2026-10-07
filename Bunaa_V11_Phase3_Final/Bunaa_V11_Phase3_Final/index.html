@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0a1020">
+<title>بَنّاء — Visual Builder Pro</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<section id="bootScreen" class="boot-screen">
+  <div class="boot-shell">
+    <div class="boot-brand"><span>ب</span></div>
+    <div class="eyebrow">VISUAL BUILDER PRO</div>
+    <h1>بَنّاء</h1>
+    <p class="boot-lead">منشئ واجهات مرئي محلي، مبني حول الطبقات، الحاويات، التخطيط المرن والتفاعلات الحقيقية.</p>
+    <div id="bootActions" class="mode-grid">
+      <button class="mode-card" type="button" data-mode="normal">
+        <span class="mode-icon">✦</span><span class="mode-title">مستخدم عادي</span>
+        <span class="mode-desc">أنشئ الصفحات بصريًا، اسحب العناصر، غيّر حجمها، واجعلها داخل بعضها.</span>
+        <span class="mode-cta">فتح المحرر <b>←</b></span>
+      </button>
+      <button class="mode-card trainee" type="button" data-mode="trainee">
+        <span class="mode-icon">⌘</span><span class="mode-title">متدرب برمجة</span>
+        <span class="mode-desc">نفس المحرر مع رؤية أوضح للـDOM والطبقات والتخطيط والتفاعلات.</span>
+        <span class="mode-cta">فتح الوضع التعليمي <b>←</b></span>
+      </button>
+    </div>
+    <div id="bootStatus" class="boot-status" aria-live="polite"></div>
+    <pre id="bootError" class="boot-error hidden"></pre>
+  </div>
+</section>
+
+<div id="app" class="app hidden">
+<header class="topbar">
+  <div class="brand-block"><div class="brand-mini">ب</div><div><strong>بَنّاء</strong><span id="modeLabel">مستخدم عادي</span></div></div>
+  <div class="toolbar-center">
+    <div class="toolbar-group history"><button id="undoBtn" class="icon-btn" title="تراجع">↶</button><button id="redoBtn" class="icon-btn" title="إعادة">↷</button></div>
+    <div class="toolbar-group pages"><select id="pageSelect" aria-label="الصفحة"></select><button id="newPageBtn" class="soft-btn">＋ صفحة</button></div>
+    <div class="toolbar-group devices"><button class="device-btn active" data-device="desktop">سطح</button><button class="device-btn" data-device="tablet">لوحي</button><button class="device-btn" data-device="mobile">جوال</button></div>
+    <div class="toolbar-group selection-tools"><button class="tool-action" data-align="left">يسار</button><button class="tool-action" data-align="center">وسط</button><button class="tool-action" data-align="right">يمين</button><button class="tool-action" data-align="top">أعلى</button><button class="tool-action" data-align="middle">وسط Y</button><button class="tool-action" data-align="bottom">أسفل</button><button class="tool-action" data-align="horizontal">توزيع X</button><button class="tool-action" data-align="vertical">توزيع Y</button></div>
+    <button id="previewBtn" class="soft-btn">▶ معاينة</button><button id="exportBtn" class="primary-btn">تصدير</button>
+  </div>
+  <div class="topbar-meta"><span id="saveState" class="save-state">محفوظ</span><button id="homeBtn" class="icon-btn" title="العودة للبداية">⌂</button></div>
+</header>
+
+<main class="builder">
+<aside class="sidebar sidebar-left">
+  <div class="sidebar-tabs"><button class="sidebar-tab active" data-tab="elements">العناصر</button><button class="sidebar-tab" data-tab="layers">الطبقات</button><button class="sidebar-tab" data-tab="interactions">التفاعل</button></div>
+  <div class="sidebar-scroll">
+    <section id="elementsTab" class="sidebar-view">
+      <div id="traineeTip" class="trainee-tip hidden"></div>
+      <div class="library-head"><div><strong>مكتبة العناصر</strong><span>اضغط للإضافة أو اسحب للوحة</span></div></div>
+      <label class="search-wrap"><span>⌕</span><input id="elementSearch" type="search" placeholder="ابحث عن عنصر…"></label>
+      <div id="categoryBar" class="category-bar"></div>
+      <div class="quick-add"><button data-quick-type="container">＋ حاوية</button><button data-quick-type="stack">＋ Stack</button><button data-quick-type="grid">＋ Grid</button><button data-quick-type="text">＋ نص</button><button data-quick-type="button">＋ زر</button></div>
+      <div id="library" class="library"></div>
+    </section>
+    <section id="layersTab" class="sidebar-view hidden">
+      <div class="library-head"><div><strong>Navigator</strong><span>شجرة الطبقات والبنية</span></div></div>
+      <div class="layer-actions"><button id="collapseLayers" class="soft-btn full">طي/فتح الفروع</button></div>
+      <div id="layers"></div>
+    </section>
+    <section id="interactionsTab" class="sidebar-view hidden">
+      <div class="library-head"><div><strong>التفاعلات</strong><span>أحداث حقيقية أثناء المعاينة</span></div></div>
+      <div id="interactionPanel"></div>
+    </section>
+  </div>
+</aside>
+
+<section class="workspace">
+  <div class="workspace-toolbar">
+    <div class="page-breadcrumb"><strong id="pageTitle">الرئيسية</strong><span id="selectionState">لا يوجد تحديد</span></div>
+    <div class="toolbar-hint">سحب • تغيير حجم • Shift لتحديد متعدد • Alt لسحب نسخة • Space للـPan</div>
+    <div class="canvas-tools"><button id="zoomOut" title="تصغير">−</button><button id="zoomReset" class="zoom-label"><span id="zoomLabel">100%</span></button><button id="zoomIn" title="تكبير">＋</button><button id="fitBtn">ملاءمة</button><button id="gridBtn" class="active">شبكة</button><button id="snapBtn" class="active">Snap</button></div>
+  </div>
+  <div id="viewport" class="viewport">
+    <div id="stage" class="stage">
+      <div id="zoomLayer" class="zoom-layer">
+        <div id="deviceFrame" class="device-frame desktop">
+          <div class="canvas-head"><span class="canvas-dot"></span><span id="canvasPageName">الرئيسية</span><span class="canvas-size">1120×810</span></div>
+          <div id="canvas" class="canvas" aria-label="مساحة بناء الصفحة"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<aside class="sidebar sidebar-right">
+  <div class="inspector-title"><strong>Style / Inspector</strong><span id="inspectorHint">حدد عنصرًا</span></div>
+  <div id="inspectorEmpty" class="inspector-empty"><div class="empty-icon">◇</div><strong>لا يوجد عنصر محدد</strong><span>حدد طبقة أو عنصرًا. ستظهر هنا خصائص المحتوى والتخطيط والمظهر والتفاعل.</span></div>
+  <div id="inspector" class="inspector hidden"></div>
+</aside>
+</main>
+</div>
+<div id="toast" class="toast hidden"></div><div id="modalRoot"></div>
+<script src="js/core.js"></script>
+<script src="js/model.js"></script>
+<script src="js/catalog.js"></script>
+<script src="js/store.js"></script>
+<script src="js/renderer.js"></script>
+<script src="js/interactions.js"></script>
+<script src="js/exporter.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/editor.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

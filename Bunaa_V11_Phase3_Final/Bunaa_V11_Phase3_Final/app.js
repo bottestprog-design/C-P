@@ -1,0 +1,9 @@
+(function(w){
+'use strict';
+const B=w.Bunaa,state={started:false};
+function showError(err){const box=B.Core.get('bootError'),status=B.Core.get('bootStatus');if(box){box.textContent=err?.stack||String(err);box.classList.remove('hidden')}if(status)status.textContent='تعذر تشغيل المحرر.'}
+function open(mode){if(state.started)return;if(!['normal','trainee'].includes(mode))return;const buttons=B.Core.qa('[data-mode]');buttons.forEach(b=>b.disabled=true);B.Core.get('bootStatus').textContent='جاري تشغيل المحرر…';B.Core.get('bootError').classList.add('hidden');try{B.Store.singleton.setUi({mode});B.Editor.start();B.Core.get('bootScreen').classList.add('hidden');B.Core.get('app').classList.remove('hidden');B.Core.get('modeLabel').textContent=mode==='trainee'?'متدرب برمجة':'مستخدم عادي';state.started=true;B.Core.get('bootStatus').textContent='تم التشغيل'}catch(e){showError(e);buttons.forEach(b=>b.disabled=false)}}
+document.addEventListener('DOMContentLoaded',()=>{B.Core.qa('[data-mode]').forEach(b=>b.addEventListener('click',()=>open(b.dataset.mode)))});
+w.BunaaApp={open,boot:open,state,resetToBoot:()=>{state.started=false;B.Editor.resetToBoot()}};
+w.BunaaDiagnostics=()=>{const s=B.Store.singleton,p=s.activePage();return {ready:document.readyState,started:state.started,mode:s.ui.mode,projectSchema:s.project.schema,page:p?{id:p.id,name:p.name,nodes:p.nodes.length}:null,selected:s.ui.selectedIds,nodes:s.all().map(x=>({id:x.node.id,type:x.node.type,parent:x.parent?.id||null,children:x.node.children.length,display:x.node.layout.display,widthMode:x.node.layout.widthMode,heightMode:x.node.layout.heightMode,x:x.node.layout.x,y:x.node.layout.y})),interactions:s.all().reduce((a,x)=>a+x.node.interactions.length,0),zoom:s.ui.zoom,device:s.ui.device,grid:s.ui.grid,snap:s.ui.snap,preview:s.ui.preview,modules:{model:!!B.Model,renderer:!!B.Renderer,interactions:!!B.Interactions,ui:!!B.UI,editor:!!B.Editor}}};
+})(window);
