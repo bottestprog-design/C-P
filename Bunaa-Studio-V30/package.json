@@ -1,0 +1,12 @@
+{
+  "name": "bunaa-studio-v30-standalone",
+  "version": "30.0.0",
+  "private": true,
+  "description": "Optional automated smoke test for the standalone Bunaa Studio V30 editor and site preview",
+  "scripts": {
+    "test:preview": "node tests/preview-smoke-test.cjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.56.0"
+  }
+}
