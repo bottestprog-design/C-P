@@ -203,6 +203,12 @@ body{min-width:0;min-height:0}
 .canvas-tools{flex-wrap:wrap;justify-content:flex-end}
 .canvas-tools .mini-tool{white-space:nowrap}
 .canvas-header{height:auto;min-height:56px;padding-top:5px;padding-bottom:5px}
+
+/* Preview viewport fix: make the live site fill the preview dialog */
+.modal-card.preview-card{display:flex;flex-direction:column;overflow:hidden}
+.modal-card.preview-card>.modal-body{flex:1 1 auto;min-height:0;overflow:hidden;padding:10px}
+.modal-card.preview-card>.modal-actions:empty{display:none}
+.preview-iframe{display:block;width:100%;height:100%;min-height:0;flex:1 1 auto;border:0;border-radius:8px;background:#fff}
 </style>
 </head>
 <body data-bunaa-version="28">
@@ -3040,7 +3046,7 @@ const {auditProject} = __require("src/engine/quality-audit.js");
 class Dialogs{
   constructor(store){this.store=store;this.host=document.getElementById('modalHost')}
   bind(){const on=(id,fn)=>document.getElementById(id)?.addEventListener('click',fn);on('previewBtn',()=>this.preview());on('exportBtn',()=>this.export());on('qualityBtn',()=>this.quality());on('globalStyleBtn',()=>this.theme());on('shortcutsBtn',()=>this.shortcuts());on('advancedDevicesBtn',()=>this.store.setUI({advancedDevices:!this.store.ui.advancedDevices}))}
-  preview(){const html=this.previewHtml();const modal=showModal(this.host,{title:'معاينة الموقع',body:'<iframe id="previewFrame" class="preview-iframe" title="المعاينة"></iframe>',wide:true});const frame=modal.querySelector('#previewFrame');frame.srcdoc=html;return modal}
+  preview(){const html=this.previewHtml();const modal=showModal(this.host,{title:'معاينة الموقع',body:'<iframe id="previewFrame" class="preview-iframe" title="معاينة الموقع" loading="eager"></iframe>',wide:true});const card=modal.querySelector('.modal-card'),body=modal.querySelector('.modal-body'),footer=modal.querySelector('.modal-actions'),frame=modal.querySelector('#previewFrame');if(card){card.style.display='flex';card.style.flexDirection='column';card.style.overflow='hidden';card.style.height='88vh'}if(body){body.style.flex='1 1 auto';body.style.minHeight='0';body.style.overflow='hidden';body.style.display='flex';body.style.flexDirection='column'}if(footer&&!footer.children.length)footer.style.display='none';if(frame){frame.style.display='block';frame.style.width='100%';frame.style.height='100%';frame.style.minHeight='0';frame.style.flex='1 1 auto';frame.style.border='0';frame.style.background='#fff';frame.srcdoc=html}return modal}
   previewHtml(){
     const project=this.store.project;
     const pages=project.pages;
