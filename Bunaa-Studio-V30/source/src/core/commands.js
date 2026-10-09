@@ -18,7 +18,27 @@ function setPageName(store,id,name){store.transact('إعادة تسمية الص
 exports.addNode = addNode;
 exports.removeNode = removeNode;
 exports.duplicateNode = duplicateNode;
+
+function moveNodeByDrop(store,id,targetId,before=true,device='desktop'){
+  if(!id||!targetId||id===targetId)return false;
+  let moved=false;
+  store.transact('ترتيب العناصر بالسحب',project=>{
+    const source=findNodeGlobal(project,id),target=findNodeGlobal(project,targetId);
+    if(!source||!target||source.nodes!==target.nodes)return;
+    const siblings=source.nodes;
+    const originalIndex=source.index;
+    const [node]=siblings.splice(originalIndex,1);
+    const targetIndex=siblings.findIndex(item=>item.id===targetId);
+    if(targetIndex<0){siblings.splice(originalIndex,0,node);return}
+    siblings.splice(targetIndex+(before?0:1),0,node);
+    if(device==='desktop')node.style={...(node.style||{}),translate:'0px 0px'};
+    else node.responsive={...(node.responsive||{}),[device]:{...(node.responsive?.[device]||{}),translate:'0px 0px'}};
+    moved=true;
+  });
+  return moved;
+}
 exports.moveNode = moveNode;
+exports.moveNodeByDrop = moveNodeByDrop;
 exports.updateProps = updateProps;
 exports.groupNodes = groupNodes;
 exports.ungroupNode = ungroupNode;
