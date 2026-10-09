@@ -1,0 +1,10 @@
+const {CMS_FIELD_TYPES,addCollection,updateCollection,removeCollection,addItem,updateItem,removeItem,getCollection,getCollectionItems} = __require("src/core/cms.js");
+exports.CMS_FIELD_TYPES = CMS_FIELD_TYPES;
+exports.addCollection = addCollection;
+exports.updateCollection = updateCollection;
+exports.removeCollection = removeCollection;
+exports.addItem = addItem;
+exports.updateItem = updateItem;
+exports.removeItem = removeItem;
+exports.getCollection = getCollection;
+exports.getCollectionItems = getCollectionItems;

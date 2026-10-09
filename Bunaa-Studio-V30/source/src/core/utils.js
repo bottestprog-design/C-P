@@ -1,0 +1,34 @@
+const clamp=(n,min,max)=>Math.min(max,Math.max(min,n));
+const uid=(prefix='id')=>{const token=globalThis.crypto?.randomUUID?.()||`${Date.now().toString(36)}_${Math.random().toString(36).slice(2,10)}`;return `${prefix}_${token.replace(/[^a-zA-Z0-9_-]/g,'')}`};
+const deepClone=o=>o===undefined?undefined:(typeof structuredClone==='function'?structuredClone(o):JSON.parse(JSON.stringify(o)));
+const isObject=v=>v&&typeof v==='object'&&!Array.isArray(v);
+const escapeHtml=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
+const escapeAttr=escapeHtml;
+const slugify=text=>{const s=String(text||'').normalize('NFKC').trim().toLowerCase().replace(/[^\p{L}\p{N}]+/gu,'-').replace(/^-+|-+$/g,'');return s||`page-${uid('slug').slice(-8)}`};
+const debounce=(fn,wait=250)=>{let t;const wrapped=(...args)=>{clearTimeout(t);t=setTimeout(()=>fn(...args),wait)};wrapped.cancel=()=>clearTimeout(t);return wrapped};
+function safeUrl(url=''){const s=String(url??'').trim();if(!s||s==='#')return '#';if(/^(javascript|vbscript|file|data):/i.test(s))return '#';if(/^(https?:|mailto:|tel:)/i.test(s))return s;if(/^[/#.][^\s]*$/.test(s)||/^[^:\s]+(?:[/#][^\s]*)?$/.test(s))return s;return '#'}
+function safeMediaUrl(url='',kind='any'){const s=String(url??'').trim();if(!s)return '';if(/^https?:/i.test(s)||/^blob:/i.test(s))return s;if(kind==='image'&&/^data:image\/(?:png|jpe?g|gif|webp|svg\+xml);base64,/i.test(s))return s;if(kind==='audio'&&/^data:audio\/[\w.+-]+;base64,/i.test(s))return s;if(kind==='video'&&/^data:video\/[\w.+-]+;base64,/i.test(s))return s;return ''}
+const dataUrlFromFile=file=>new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(r.result);r.onerror=()=>reject(r.error||new Error('فشل قراءة الملف'));r.readAsDataURL(file)});
+const formatBytes=b=>{const n=Number(b)||0;return n<1024?`${n} B`:n<1048576?`${(n/1024).toFixed(1)} KB`:`${(n/1048576).toFixed(2)} MB`};
+const downloadBlob=(blob,name)=>{const anchor=document.createElement('a');const url=URL.createObjectURL(blob);anchor.href=url;anchor.download=name;document.body.appendChild(anchor);anchor.click();anchor.remove();setTimeout(()=>URL.revokeObjectURL(url),1000)};
+const downloadText=(content,name,type='text/plain;charset=utf-8')=>downloadBlob(new Blob([content],{type}),name);
+const throttle=(fn,wait=80)=>{let last=0,timer=null;return (...args)=>{const now=Date.now(),remaining=wait-(now-last);if(remaining<=0){clearTimeout(timer);timer=null;last=now;fn(...args)}else if(!timer){timer=setTimeout(()=>{timer=null;last=Date.now();fn(...args)},remaining)}}};
+const deepMerge=(base,patch)=>{if(!isObject(base)||!isObject(patch))return deepClone(patch);const out=deepClone(base);for(const [key,value] of Object.entries(patch))out[key]=isObject(value)&&isObject(out[key])?deepMerge(out[key],value):deepClone(value);return out};
+const textToLines=text=>String(text||'').split(/\n+/).map(s=>s.trim()).filter(Boolean);
+exports.clamp = clamp;
+exports.uid = uid;
+exports.deepClone = deepClone;
+exports.isObject = isObject;
+exports.escapeHtml = escapeHtml;
+exports.escapeAttr = escapeAttr;
+exports.slugify = slugify;
+exports.debounce = debounce;
+exports.safeUrl = safeUrl;
+exports.safeMediaUrl = safeMediaUrl;
+exports.dataUrlFromFile = dataUrlFromFile;
+exports.formatBytes = formatBytes;
+exports.downloadBlob = downloadBlob;
+exports.downloadText = downloadText;
+exports.throttle = throttle;
+exports.deepMerge = deepMerge;
+exports.textToLines = textToLines;
