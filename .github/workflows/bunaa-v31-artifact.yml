@@ -1,0 +1,48 @@
+name: Build Bunaa Studio V31 artifact
+on:
+  push:
+    branches:
+      - feature/bunaa-v31-canvas-grouping
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Rebuild embedded HTML from source
+        run: python Bunaa-Studio-V30/source/scripts/build_bundle.py
+      - name: Syntax and feature contract checks
+        run: |
+          node --check Bunaa-Studio-V30/source/bunaa.bundle.js
+          python Bunaa-Studio-V30/source/scripts/test_v31.py
+      - name: Verify direct HTML documents
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+          for name in ('index.html', 'Bunaa.html'):
+              html=(Path('Bunaa-Studio-V30')/name).read_text(encoding='utf-8')
+              assert html.count('</script>') == 1, name
+              assert 'data-bunaa-version="31"' in html, name
+              assert 'Bunaa Studio V31' in html, name
+          print('Standalone HTML integrity OK')
+          PY
+      - name: Package direct-open project
+        run: |
+          cd Bunaa-Studio-V30
+          zip -qr ../Bunaa-Studio-V31-canvas-controls.zip .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Bunaa-Studio-V31-canvas-controls
+          path: Bunaa-Studio-V31-canvas-controls.zip
+          if-no-files-found: error
+          retention-days: 7

@@ -19,4 +19,50 @@ exports.moveNode = moveNode;
 exports.updateProps = updateProps;
 exports.updateStyle = updateStyle;
 exports.insertNodeAtDrop = insertNodeAtDrop;
+
+function groupNodes(store, ids) {
+  const unique = [...new Set((ids || []).filter(Boolean))];
+  if (unique.length < 2) return null;
+  let groupId = null;
+  store.transact('تجميع العناصر', p => {
+    const handles = unique.map(id => findNodeGlobal(p, id));
+    if (handles.some(h => !h)) return;
+    const first = handles[0];
+    if (!handles.every(h => h.parent === first.parent && h.page === first.page)) return;
+    const list = first.parent ? first.parent.children : first.page.nodes;
+    const sorted = handles.slice().sort((a,b) => a.index - b.index);
+    const group = factory('group');
+    group.id = uid('node');
+    group.props = { ...(group.props || {}), label: 'مجموعة جديدة', title: 'مجموعة جديدة' };
+    group.style = { ...(group.style || {}), display: 'flex', flexDirection: 'column', gap: '12px', width: '100%' };
+    group.children = sorted.map(h => h.node);
+    groupId = group.id;
+    const indexes = sorted.map(h => h.index).sort((a,b)=>b-a);
+    const insertAt = Math.min(...indexes);
+    indexes.forEach(index => list.splice(index, 1));
+    list.splice(insertAt, 0, group);
+  });
+  if (!groupId) return null;
+  store.setUI({ selected: groupId, selectedIds: [groupId], rightOpen: true });
+  return store.find(groupId)?.node || { id: groupId, type: 'group' };
+}
+function ungroupNode(store, id) {
+  if (!id) return false;
+  const existing = findNodeGlobal(store.project, id);
+  if (!existing || existing.node.type !== 'group') return false;
+  let childIds = [];
+  store.transact('فك تجميع العناصر', p => {
+    const hit = findNodeGlobal(p, id);
+    if (!hit || hit.node.type !== 'group') return;
+    const list = hit.parent ? hit.parent.children : hit.page.nodes;
+    const children = Array.isArray(hit.node.children) ? hit.node.children : [];
+    childIds = children.map(n => n.id);
+    list.splice(hit.index, 1, ...children);
+  });
+  store.setUI({ selected: childIds[0] || null, selectedIds: childIds.slice(0,1), rightOpen: true });
+  return true;
+}
+
 exports.setPageName = setPageName;
+exports.groupNodes = groupNodes;
+exports.ungroupNode = ungroupNode;

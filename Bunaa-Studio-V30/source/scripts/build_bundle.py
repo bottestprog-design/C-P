@@ -7,7 +7,7 @@ ROOT = Path(__file__).resolve().parents[2]
 SOURCE = ROOT / "source"
 MODULE_ROOT = SOURCE / "src"
 BUNDLE_PATH = SOURCE / "bunaa.bundle.js"
-VERSION = "V30"
+VERSION = "V31"
 
 
 def build_bundle() -> str:
@@ -72,7 +72,8 @@ def embed_bundle(bundle: str) -> None:
             if style_end < 0:
                 raise SystemExit(f"No inline style block in {name}")
             html = html[:style_end] + "\n" + CSS + "\n" + html[style_end:]
-        html = html.replace("Bunaa Studio V29", "Bunaa Studio V30")
+        html = re.sub(r"Bunaa Studio V\\d+", "Bunaa Studio V31", html)
+        html = re.sub(r'data-bunaa-version="\\d+"', 'data-bunaa-version="31"', html)
         path.write_text(html, encoding="utf-8")
 
 
