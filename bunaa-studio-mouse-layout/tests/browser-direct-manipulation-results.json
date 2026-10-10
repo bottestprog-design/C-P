@@ -1,0 +1,24 @@
+{
+  "application": "Bunaa Studio V27",
+  "testMethod": "Local Chromium session driven through Chrome DevTools Protocol",
+  "viewport": {"width": 1440, "height": 900},
+  "checks": {
+    "applicationBooted": true,
+    "workspacePreviewOpenedAsSeparatePage": true,
+    "previewDocumentCompletedAndRenderedProjectContent": true,
+    "workspacePreviewHasIframeFallback": true,
+    "oldPreviewControlPreserved": true,
+    "buttonResize": {"passed": true, "width": 157, "height": 98, "modelDimensionsPersisted": true},
+    "siblingDragReorder": {"passed": true, "orderChanged": true},
+    "imageResize": {"passed": true, "before": {"width": 280, "height": 156}, "after": {"width": 320, "height": 181}, "modelResponsiveAndRenderedDimensionsAgree": true},
+    "marqueeSelection": {"passed": true, "selectedTwoSiblingElements": true},
+    "selectionAfterDrag": {"passed": true, "canvasScrollPositionRetained": true},
+    "containerGrouping": {"passed": true, "layoutsAvailable": ["row", "column", "grid", "stack"], "columnGroupChildren": 2, "gridGroupChildren": 2},
+    "consoleAndRuntimeErrors": {"passed": true, "observedUncaughtErrors": 0}
+  },
+  "limits": [
+    "Browser interaction checks were performed at a 1440x900 desktop viewport.",
+    "No claim is made for live external publishing or third-party service verification.",
+    "Tablet and mobile layouts were not separately exercised in the interactive browser test."
+  ]
+}
