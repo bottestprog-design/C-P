@@ -1,0 +1,21 @@
+PASS 49 source modules present
+PASS 49 static module references resolve
+PASS index.html: 282 static HTML elements, 98 IDs, no duplicates
+PASS Bunaa.html: 282 static HTML elements, 98 IDs, no duplicates
+PASS index.html and Bunaa.html are synchronized
+PASS V34 release metadata is consistent and all 9 secondary toolbar actions remain in More
+PASS 21 existing toolbar action IDs retained
+PASS offline build script present
+PASS node --check: bundle syntax valid
+PASS direct mouse move/resize hooks and responsive initial/viewport fit present in source modules
+PASS single-file HTML export includes all linked pages and selected initial page control
+PASS image fill sizing, object-fit, media-aware ZIP export, CORS report, and seventeen catalog patterns including the new production UI blocks
+PASS unique renderer branch for functional logo cloud
+PASS external media completion helper, launcher, and mocked offline end-to-end test pass
+PASS all eight north/east/south/west/corner resize grips are present
+PASS real iframe preview, desktop/tablet/mobile controls, refresh and pop-out hooks present
+PASS multi-stop linear/radial gradient and auto-content-height contracts present
+PASS preview and exported runtime share functional cart, filter, carousel, and form interactions
+PASS device-responsive dimensions/positions and shared multi-trigger interactions are wired
+PASS exported page metadata uses V34 and host scroll height follows the growing page
+RESULT: 20 integrity groups passed

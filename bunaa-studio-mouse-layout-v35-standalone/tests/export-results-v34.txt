@@ -1,0 +1,17 @@
+TEST starting editor
+TEST creating project
+TEST project created
+TEST open export modal
+TEST export modal open
+TEST click standalone export
+TEST download received
+TEST load standalone html
+TEST standalone loaded
+TEST navigate to home page
+TEST image visible and decode
+TEST navigate using page element
+TEST click zip export
+TEST ZIP received
+PASS V34 exports: selected-page single HTML embeds every linked page, CSS, animations, JS, and image bytes; navigation works in Chromium.
+PASS V34 ZIP export: all pages linked locally, styles/script present, uploaded media stored and referenced, ZIP CRC valid.
+PASS canvas spacing metrics: {"vw": 760, "stageWidth": 728, "zoom": 0.6169491525423729, "pad": "10px", "leftGap": 31, "rightGap": 31, "overflow": 0, "responsiveFit": [{"viewport": 1180, "vw": 560, "sw": 528, "left": 31, "right": 31, "zoom": 0.44745762711864406}, {"viewport": 900, "vw": 870, "sw": 844, "left": 28, "right": 28, "zoom": 0.7152542372881356}, {"viewport": 560, "vw": 530, "sw": 510, "left": 25, "right": 25, "zoom": 0.4322033898305085}, {"viewport": 390, "vw": 360, "sw": 340, "left": 25, "right": 25, "zoom": 0.288135593220339}, {"viewport": 320, "vw": 290, "sw": 270, "left": 25, "right": 25, "zoom": 0.2288135593220339}]}

@@ -1,0 +1,113 @@
+[
+  {
+    "device": "desktop",
+    "viewport": [
+      1440,
+      900
+    ],
+    "states": [
+      {
+        "label": "open",
+        "root": 1440,
+        "canvas": 800,
+        "viewport": 800,
+        "scroll": true
+      },
+      {
+        "label": "left-closed",
+        "root": 1440,
+        "canvas": 1120,
+        "viewport": 1120,
+        "scroll": true
+      },
+      {
+        "label": "both-closed",
+        "root": 1440,
+        "canvas": 1440,
+        "viewport": 1440,
+        "scroll": true
+      },
+      {
+        "label": "reopened",
+        "root": 1440,
+        "canvas": 800,
+        "viewport": 800,
+        "scroll": true
+      }
+    ]
+  },
+  {
+    "device": "tablet-boundary",
+    "viewport": [
+      900,
+      800
+    ],
+    "states": [
+      {
+        "label": "open",
+        "root": 900,
+        "canvas": 900,
+        "viewport": 900,
+        "scroll": true
+      },
+      {
+        "label": "left-closed",
+        "root": 900,
+        "canvas": 900,
+        "viewport": 900,
+        "scroll": true
+      },
+      {
+        "label": "both-closed",
+        "root": 900,
+        "canvas": 900,
+        "viewport": 900,
+        "scroll": true
+      },
+      {
+        "label": "reopened",
+        "root": 900,
+        "canvas": 900,
+        "viewport": 900,
+        "scroll": true
+      }
+    ]
+  },
+  {
+    "device": "mobile",
+    "viewport": [
+      390,
+      844
+    ],
+    "states": [
+      {
+        "label": "open",
+        "root": 390,
+        "canvas": 390,
+        "viewport": 390,
+        "scroll": true
+      },
+      {
+        "label": "left-closed",
+        "root": 390,
+        "canvas": 390,
+        "viewport": 390,
+        "scroll": true
+      },
+      {
+        "label": "both-closed",
+        "root": 390,
+        "canvas": 390,
+        "viewport": 390,
+        "scroll": true
+      },
+      {
+        "label": "reopened",
+        "root": 390,
+        "canvas": 390,
+        "viewport": 390,
+        "scroll": true
+      }
+    ]
+  }
+]

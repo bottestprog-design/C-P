@@ -1,0 +1,15 @@
+{
+  "version": "V27",
+  "modules": 49,
+  "module_requires": 135,
+  "missing_modules": [],
+  "real_dom_ids": 96,
+  "duplicate_dom_ids": 0,
+  "static_dom_refs": 75,
+  "missing_static_dom_refs": [],
+  "real_script_tags": 1,
+  "real_style_tags": 1,
+  "flex_layout_contract": true,
+  "layout_diagnostic": true,
+  "browser_layout_test": "passed"
+}

@@ -1,0 +1,3741 @@
+(()=>{'use strict';
+const __modules=new Map();const __cache=new Map();
+const __require=(id)=>{if(__cache.has(id))return __cache.get(id);const factory=__modules.get(id);if(!factory)throw new Error("Bunaa module not found: "+id);const exports={};__cache.set(id,exports);factory(exports,__require);return exports};
+__modules.set("src/app/app.js",(exports,__require)=>{
+const {Store} = __require("src/core/store.js");
+const {ProjectRepository} = __require("src/core/project-repository.js");
+const {ProjectService} = __require("src/features/projects/project-service.js");
+const {WorkspaceEngine} = __require("src/engine/workspace.js");
+const {Panels} = __require("src/ui/panels.js");
+const {Inspector} = __require("src/ui/inspector.js");
+const {Dialogs} = __require("src/ui/dialogs.js");
+const {showModal} = __require("src/ui/modal.js");
+const {templates,materializeTemplate} = __require("src/catalog/templates.js");
+const {AuthStore} = __require("src/app/auth.js");
+const {AppRouter,APP_ROUTES} = __require("src/app/router.js");
+const {CommandPalette} = __require("src/app/command-palette.js");
+const {compileSite} = __require("src/features/seo/index.js");
+const {CMS_FIELD_TYPES,addCollection,updateCollection,removeCollection,addItem,updateItem,removeItem} = __require("src/features/cms/index.js");
+const {createSymbolFromSelection} = __require("src/features/components/index.js");
+const {StudioManagers} = __require("src/app/managers.js");
+const {AssetService} = __require("src/features/assets/asset-service.js");
+const {ReleaseService} = __require("src/features/releases/release-service.js");
+const {defineClass,defineTextStyle,setDesignToken} = __require("src/features/design/design-service.js");
+const {listVariables,setVariable,removeVariable} = __require("src/core/variables.js");
+const {initializeDevicePresetsTree} = __require("src/core/device-presets.js");
+
+const $=id=>document.getElementById(id);
+const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
+const modeLabel=mode=>mode==='trainee'?'متدرب برمجة':'بناء بصري';
+const timeLabel=value=>{try{return new Intl.DateTimeFormat('ar',{dateStyle:'medium',timeStyle:'short'}).format(new Date(value))}catch{return ''}};
+class App{
+  constructor(){
+    this.router=new AppRouter();
+    this.auth=new AuthStore();
+    this.repository=new ProjectRepository();
+    this.projectService=new ProjectService(this.repository);
+    this.store=new Store(this.repository);
+    this.assetService=new AssetService(this.store);
+    this.releaseService=new ReleaseService(this.store);
+    this.managers=new StudioManagers(this);
+    this.panels=new Panels(this.store);
+    this.inspector=new Inspector(this.store);this.inspector.assetService=this.assetService;
+    this.engine=new WorkspaceEngine(this.store,this.inspector,this.panels);
+    this.panels.engine=this.engine;
+    this.panels.assetService=this.assetService;
+    this.dialogs=new Dialogs(this.store);
+    this.booted=false;this.started=false;this.globalBound=false;this.dashboardQuery='';this.dashboardUnbind=null;this.mobileDrawerKey='leftOpen';this.commandPalette=new CommandPalette(this);
+  }
+
+  start(){
+    if(this.started)return this;
+    this.started=true;
+    this.bindGlobalAuth();
+    this.router.subscribe(route=>this.renderRoute(route));
+    if(this.auth.authenticated){this.store.setAccount(this.auth.user.id);this.showDashboard()}else this.showAuth();
+    return this;
+  }
+
+  bindGlobalAuth(){
+    if(this.globalBound)return;
+    this.globalBound=true;
+    document.querySelectorAll('[data-auth-tab]').forEach(button=>button.addEventListener('click',()=>this.switchAuthTab(button.dataset.authTab||'login')));
+    document.querySelectorAll('.account-mode').forEach(card=>{const radio=card.querySelector('input[type="radio"]');const sync=()=>card.parentElement?.querySelectorAll('.account-mode').forEach(item=>item.classList.toggle('active',item===card));card.addEventListener('click',()=>{if(radio)radio.checked=true;sync()});radio?.addEventListener('change',sync)});
+    $('loginForm')?.addEventListener('submit',e=>this.submitLogin(e));$('registerForm')?.addEventListener('submit',e=>this.submitRegister(e));
+    $('logoutBtn')?.addEventListener('click',()=>this.logout());
+    $('guestBtn')?.addEventListener('click',()=>this.enterGuestMode());
+    document.querySelectorAll('[data-quick-template]').forEach(button=>button.addEventListener('click',()=>this.createNewProject(Number(button.dataset.quickTemplate||0),button.dataset.projectName||'')));
+    $('dashboardHelpBtn')?.addEventListener('click',()=>this.showStartGuide());
+    $('dashboardSearch')?.addEventListener('input',e=>{this.dashboardQuery=String(e.target.value||'').trim().toLowerCase();this.renderDashboard()});
+    $('emptyNewProjectBtn')?.addEventListener('click',()=>this.createNewProject());
+    $('newProjectBtn')?.addEventListener('click',()=>this.createNewProject());
+  }
+
+  renderRoute(route){
+    document.body.dataset.appRoute=route;
+    $('auth')?.classList.toggle('hidden',route!==APP_ROUTES.AUTH);
+    $('onboarding')?.classList.toggle('hidden',route!==APP_ROUTES.DASHBOARD);
+    $('workspace')?.classList.toggle('hidden',route!==APP_ROUTES.EDITOR);
+    if(route===APP_ROUTES.AUTH){setTimeout(()=>$('loginEmail')?.focus(),0);return}
+    if(route===APP_ROUTES.DASHBOARD){this.renderDashboard();return}
+    if(route===APP_ROUTES.EDITOR){this.boot();this.render()}
+  }
+
+  showAuth(){this.router.go(APP_ROUTES.AUTH)}
+
+  showDashboard(){
+    if(!this.auth.authenticated){this.showAuth();return this}
+    if(!this.store.userId)this.store.setAccount(this.auth.user.id);
+    this.router.go(APP_ROUTES.DASHBOARD);return this;
+  }
+
+  switchAuthTab(tab='login'){
+    const login=tab==='login';document.querySelectorAll('[data-auth-tab]').forEach(button=>button.classList.toggle('active',button.dataset.authTab===tab));$('loginForm')?.classList.toggle('hidden',!login);$('registerForm')?.classList.toggle('hidden',login);this.clearAuthMessages();
+  }
+  clearAuthMessages(){for(const id of ['loginMessage','registerMessage']){const e=$(id);if(e){e.textContent='';e.className='auth-message'}}}
+  authMessage(id,message,kind='error'){const e=$(id);if(e){e.textContent=message;e.className=`auth-message ${kind}`}}
+  setFormBusy(form,busy){if(!form)return;form.dataset.busy=busy?'1':'0';form.querySelectorAll('input,button,select,textarea').forEach(control=>control.disabled=busy);const submit=form.querySelector('button[type="submit"]');if(submit){submit.dataset.defaultLabel??=submit.textContent;submit.textContent=busy?'جارٍ التنفيذ…':submit.dataset.defaultLabel}}
+
+  async submitLogin(event){
+    event.preventDefault();this.clearAuthMessages();const form=$('loginForm');if(form?.dataset.busy==='1')return;this.setFormBusy(form,true);
+    try{const user=await this.auth.login($('loginEmail')?.value,$('loginPassword')?.value);this.store.setAccount(user.id);this.showDashboard()}catch(error){this.authMessage('loginMessage',error?.message||'تعذر تسجيل الدخول.')}finally{this.setFormBusy(form,false)}
+  }
+  async submitRegister(event){
+    event.preventDefault();this.clearAuthMessages();const form=$('registerForm');if(form?.dataset.busy==='1')return;this.setFormBusy(form,true);const password=$('registerPassword')?.value||'',confirmation=$('registerPasswordConfirm')?.value||'';
+    if(password!==confirmation){this.authMessage('registerMessage','كلمتا المرور غير متطابقتين.');this.setFormBusy(form,false);return}
+    try{const mode=document.querySelector('input[name="accountMode"]:checked')?.value||'normal';const user=await this.auth.register({name:$('registerName')?.value,email:$('registerEmail')?.value,password,mode});this.store.setAccount(user.id);this.showDashboard()}catch(error){this.authMessage('registerMessage',error?.message||'تعذر إنشاء الحساب.')}finally{this.setFormBusy(form,false)}
+  }
+
+  enterGuestMode(){try{const user=this.auth.loginGuest();this.store.setAccount(user.id);this.showDashboard();this.toast('أهلًا بك. هذه تجربة محلية تحفظ على هذا الجهاز فقط.')}catch(error){this.authMessage('loginMessage',error?.message||'تعذر بدء التجربة.')}}
+
+
+  showStartGuide(){const body=`<div class="start-guide"><div class="guide-step"><b>1</b><div><strong>اختر بداية جاهزة</strong><p>ابدأ من قالب بدل بناء كل شيء من الصفر.</p></div></div><div class="guide-step"><b>2</b><div><strong>اضغط على أي عنصر</strong><p>عدّل النص والمظهر من لوحة التخصيص اليمنى.</p></div></div><div class="guide-step"><b>3</b><div><strong>جرّب ثم نزّل</strong><p>استخدم المعاينة، فحص الجودة، ثم نزّل الموقع ZIP.</p></div></div></div>`;return showModal($('modalHost'),{title:'ابدأ في 3 خطوات',body,actions:[{label:'فهمت'}]})}
+
+  renderDashboard(){
+    if(!this.auth.authenticated)return this.showAuth();
+    const user=this.auth.user;if($('welcomeText'))$('welcomeText').textContent=user?.name||'بك';if($('dashboardUser'))$('dashboardUser').textContent=user?.name||'الحساب';if($('dashboardMode'))$('dashboardMode').textContent=modeLabel(user?.mode);if($('projectCountLabel'))$('projectCountLabel').textContent=String(this.projectService.stats(this.auth.user.id).count);
+    const grid=$('projectGrid'),empty=$('dashboardEmpty');if(!grid)return;
+    const allProjects=this.projectService.list(this.auth.user.id,this.dashboardQuery);const projects=allProjects;grid.innerHTML=projects.map((project,index)=>`<article class="project-card ${index===0?'recent':''}" data-project-card="${esc(project.id)}"><div class="project-card-preview"><span class="project-preview-badge">${index===0?'الأحدث':'مشروع'}</span><div class="preview-lines"><i></i><i></i><i></i><i></i></div></div><div class="project-card-body"><div><b>${esc(project.name)}</b><small>${project.pages} صفحات • ${project.nodes} عناصر</small><small>آخر حفظ: ${esc(timeLabel(project.updatedAt))}</small></div><div class="project-card-actions"><button class="primary-btn" data-project-open="${esc(project.id)}">فتح</button><button class="icon-btn tiny" title="خيارات" data-project-menu="${esc(project.id)}">⋯</button></div></div></article>`).join('');
+    empty?.classList.toggle('hidden',projects.length>0);grid.classList.toggle('hidden',projects.length===0);if(empty&&!projects.length&&allProjects.length)empty.innerHTML='<div class="empty-project-icon">⌕</div><b>لا توجد نتائج</b><p>جرّب اسم مشروع مختلف أو امسح البحث.</p>';
+    grid.onclick=e=>{const open=e.target.closest('[data-project-open]');if(open)this.openProject(open.dataset.projectOpen);const menu=e.target.closest('[data-project-menu]');if(menu)this.projectMenu(menu.dataset.projectMenu)};
+  }
+
+  createNewProject(preselect=0,presetName=''){
+
+    if(!this.auth.authenticated)return this.showAuth();
+    const body=`<div class="create-project-layout"><div class="field"><span>اسم المشروع</span><input id="newProjectName" value="${esc(presetName||'موقعي الجديد')}" maxlength="80"></div><div class="field"><span>ابدأ من قالب</span><div class="template-choice-grid">${templates.map((t,i)=>`<button type="button" class="template-choice ${i===0?'active':''}" data-template-choice="${i}"><strong>${esc(t.name)}</strong><small>${esc(t.description)}</small></button>`).join('')}</div></div></div>`;
+    const modal=showModal($('modalHost'),{title:'إنشاء مشروع جديد',body,actions:[{label:'إلغاء'},{label:'إنشاء المشروع',kind:'primary',onClick:()=>this.finishCreateProject(modal)}],wide:true});
+    modal.dataset.template=String(Math.max(0,Math.min(templates.length-1,Number(preselect)||0)));
+    const selected=modal.querySelector(`[data-template-choice="${modal.dataset.template}"]`);if(selected){modal.querySelectorAll('[data-template-choice]').forEach(x=>x.classList.toggle('active',x===selected))} modal.querySelectorAll('[data-template-choice]').forEach(button=>button.addEventListener('click',()=>{modal.dataset.template=button.dataset.templateChoice;modal.querySelectorAll('[data-template-choice]').forEach(x=>x.classList.toggle('active',x===button))}));
+    return modal;
+  }
+
+  finishCreateProject(modal){
+    try{
+      const name=$('newProjectName')?.value?.trim()||'موقعي الجديد';const templateIndex=Number(modal.dataset.template||0);const template=materializeTemplate(templates[templateIndex]);
+      this.store.createProject(name,{meta:{template:templates[templateIndex]?.name||''}});
+      this.store.transact('بناء المشروع من قالب',project=>{project.pages=template.pages.map(page=>({...page,nodes:initializeDevicePresetsTree(page.nodes||[],this.store.ui.device||'desktop')}));project.activePageId=project.pages[0].id;project.theme=template.theme||project.theme;project.devices=template.devices||project.devices;project.assets=template.assets||[];project.variables=template.variables||{};project.interactions=template.interactions||[];project.settings={...project.settings,...(template.settings||{})};project.meta.template=templates[templateIndex]?.name||''});
+      this.store.persistNow();modal.remove();this.showWorkspace(this.store.projectId);
+    }catch(error){this.toast(error?.message||'تعذر إنشاء المشروع.');}
+  }
+
+  openProject(projectId){if(!this.auth.authenticated)return this.showAuth();if(!this.store.openProject(projectId)){this.toast('المشروع غير موجود أو لم يعد متاحًا.');this.renderDashboard();return false}this.showWorkspace(projectId);return true}
+  showWorkspace(){
+    if(!this.auth.authenticated){this.showAuth();return this}
+    if(!this.store.projectId){const first=this.store.listProjects()[0];if(first)this.store.openProject(first.id);else{this.createNewProject();return this}}
+    this.router.go(APP_ROUTES.EDITOR);return this;
+  }
+
+  projectMenu(projectId){
+    const project=this.store.listProjects().find(x=>x.id===projectId);if(!project)return;
+    const current=projectId===this.store.projectId;
+    const body=`<div class="list-stack"><button class="secondary-btn" id="pmOpen">فتح المشروع</button><button class="secondary-btn" id="pmRename">إعادة التسمية</button><button class="secondary-btn" id="pmDuplicate">نسخ المشروع</button><button class="secondary-btn" id="pmBackup">نسخة احتياطية</button><button class="danger-btn" id="pmDelete">حذف المشروع</button></div><div class="tips-card"><b>${current?'المشروع المفتوح حاليًا':'مشروع في مساحة الحساب'}</b><p>${project.pages} صفحات • ${project.nodes} عناصر • آخر تحديث ${esc(timeLabel(project.updatedAt))}</p></div>`;
+    const modal=showModal($('modalHost'),{title:esc(project.name),body});
+    modal.querySelector('#pmOpen').onclick=()=>{modal.remove();this.openProject(projectId)};
+    modal.querySelector('#pmRename').onclick=()=>{const name=prompt('اسم المشروع الجديد',project.name);if(name?.trim()){if(current)this.store.transact('تسمية المشروع',p=>p.meta.name=name.trim());else this.repository.rename(this.auth.user.id,projectId,name.trim())}modal.remove();if(current)this.render();else this.renderDashboard()};
+    modal.querySelector('#pmDuplicate').onclick=()=>{const copy=this.store.duplicateProject(projectId);modal.remove();this.renderDashboard();if(copy)this.toast('تم نسخ المشروع كمشروع مستقل.')};
+    modal.querySelector('#pmBackup').onclick=()=>{modal.remove();if(current)this.showBackupManager();else{const saved=this.repository.get(this.auth.user.id,projectId);if(saved)this.managers.backupProject(saved)}};
+    modal.querySelector('#pmDelete').onclick=()=>{if(!confirm('سيتم حذف المشروع نهائيًا من هذا المتصفح. هل تريد المتابعة؟'))return;this.repository.remove(this.auth.user.id,projectId);modal.remove();if(current){this.store.clearProject();this.showDashboard()}else this.renderDashboard()};
+  }
+
+  logout(){this.store.persistNow();this.auth.logout();this.store.clearAccount();this.showAuth()}
+
+  boot(){
+    if(this.booted)return;
+    this.booted=true;this.panels.mount();this.inspector.mount($('inspector'));this.engine.mount();this.dialogs.bind();this.bindEditorUi();this.store.subscribe(()=>{if(this.router.route===APP_ROUTES.EDITOR)this.render()});window.addEventListener('beforeunload',()=>this.store.persistNow());window.addEventListener('resize',()=>this.syncDrawers());
+  }
+
+  bindEditorUi(){
+    const on=(id,event,handler)=>$(id)?.addEventListener(event,handler);
+    on('homeBtn','click',()=>{this.store.persistNow();this.showDashboard()});on('projectMenuBtn','click',()=>this.projectMenu(this.store.projectId));on('commandBtn','click',()=>this.commandPalette.open());on('siteSettingsBtnFooter','click',()=>this.showSiteSettings());on('cmsBtn','click',()=>this.showCmsManager());on('designBtn','click',()=>this.showDesignManager());on('siteSettingsBtn','click',()=>this.showSiteSettings());on('navigationBtn','click',()=>this.showNavigationManager());on('releaseBtn','click',()=>this.showReleaseManager());on('createSymbolBtn','click',()=>this.createSharedComponent());on('auditBtn','click',()=>this.showAudit());on('backupBtn','click',()=>this.showBackupManager());on('undoBtn','click',()=>this.store.undo());on('redoBtn','click',()=>this.store.redo());on('leftToggle','click',()=>this.toggle('leftOpen'));on('rightToggle','click',()=>this.toggle('rightOpen'));on('leftClose','click',()=>this.setOpen('leftOpen',false));on('rightClose','click',()=>this.setOpen('rightOpen',false));on('leftRail','click',()=>this.setOpen('leftOpen',true));on('rightRail','click',()=>this.setOpen('rightOpen',true));on('managePagesBtn','click',()=>this.panels.pagesModal());on('pageSelect','change',e=>this.selectPage(e.target.value));on('pagePrev','click',()=>this.stepPage(-1));on('pageNext','click',()=>this.stepPage(1));
+    document.querySelectorAll('.device-btn').forEach(button=>button.addEventListener('click',()=>this.engine.setDevice(button.dataset.device)));window.addEventListener('keydown',e=>this.keyboard(e));
+  }
+  selectPage(id){if(!this.store.setActivePage(id))this.render()}
+  stepPage(direction){const pages=this.store.project.pages,index=pages.findIndex(p=>p.id===this.store.project.activePageId);if(index<0||pages.length<2)return;this.selectPage(pages[(index+direction+pages.length)%pages.length].id)}
+  toggle(key){this.setOpen(key,!this.store.ui[key])}
+  setOpen(key,value){
+    const open=Boolean(value);
+    if(open&&matchMedia('(max-width:900px)').matches&&['leftOpen','rightOpen'].includes(key)){
+      this.mobileDrawerKey=key;
+      this.store.setUI({[key]:true,[key==='leftOpen'?'rightOpen':'leftOpen']:false});
+      return;
+    }
+    this.store.setUI({[key]:open});
+  }
+  syncDrawers(){
+    const root=document.querySelector('.workspace-main');if(!root)return;
+    const left=$('leftDrawer'),right=$('rightDrawer'),leftRail=$('leftRail'),rightRail=$('rightRail');
+    const mobile=matchMedia('(max-width:900px)').matches;
+    if(mobile&&this.store.ui.leftOpen&&this.store.ui.rightOpen){
+      const keep=this.mobileDrawerKey==='rightOpen'?'rightOpen':'leftOpen';
+      const close=keep==='leftOpen'?'rightOpen':'leftOpen';
+      this.store.setUI({[keep]:true,[close]:false},{emit:false});
+    }
+    root.classList.toggle('left-collapsed',!this.store.ui.leftOpen);
+    root.classList.toggle('right-collapsed',!this.store.ui.rightOpen);
+    root.classList.toggle('drawer-mobile',mobile);
+    root.style.removeProperty('grid-template-columns');
+    left?.classList.toggle('is-collapsed',!this.store.ui.leftOpen);
+    right?.classList.toggle('is-collapsed',!this.store.ui.rightOpen);
+    left?.classList.remove('hidden');right?.classList.remove('hidden');
+    left?.setAttribute('aria-hidden',String(!this.store.ui.leftOpen));
+    right?.setAttribute('aria-hidden',String(!this.store.ui.rightOpen));
+    leftRail?.classList.toggle('hidden-rail',this.store.ui.leftOpen);
+    rightRail?.classList.toggle('hidden-rail',this.store.ui.rightOpen);
+    leftRail?.setAttribute('aria-hidden',String(this.store.ui.leftOpen));
+    rightRail?.setAttribute('aria-hidden',String(this.store.ui.rightOpen));
+    leftRail?.setAttribute('aria-label',this.store.ui.leftOpen?'إخفاء لوحة العناصر':'إظهار لوحة العناصر');
+    rightRail?.setAttribute('aria-label',this.store.ui.rightOpen?'إخفاء لوحة التخصيص':'إظهار لوحة التخصيص');
+    requestAnimationFrame(()=>requestAnimationFrame(()=>{this.engine?.reflowHost?.();this.engine?.centerStage?.()}));
+  }
+  keyboard(event){const typing=event.target?.matches?.('input,textarea,select,[contenteditable="true"]'),mod=event.ctrlKey||event.metaKey;if(mod&&event.key.toLowerCase()==='k'&&!typing){event.preventDefault();this.commandPalette.open();return;}if(mod&&event.key.toLowerCase()==='z'){event.preventDefault();event.shiftKey?this.store.redo():this.store.undo();return}if(mod&&event.key.toLowerCase()==='y'){event.preventDefault();this.store.redo();return}if(mod&&event.shiftKey&&event.key.toLowerCase()==='z'){event.preventDefault();this.store.redo();return}if(mod&&event.key.toLowerCase()==='s'){event.preventDefault();this.store.persistNow();this.toast(this.store.ui.saveError?'تعذر الحفظ':'تم حفظ المشروع');return}if(mod&&event.key==='='&&!typing){event.preventDefault();this.engine.setZoom(this.store.ui.zoom+.1);return}if(mod&&event.key==='-'&&!typing){event.preventDefault();this.engine.setZoom(this.store.ui.zoom-.1);return}if(event.key.toLowerCase()==='f'&&!typing&&!mod)this.engine.fit()}
+  showNavigationManager(){return this.managers.navigation()}
+  showReleaseManager(){return this.managers.release()}
+  showBackupManager(){return this.managers.backup()}
+
+  showCmsManager(){const collections=this.store.project.cms?.collections||[];const body=`<div class="cms-toolbar"><div><b>Collections</b><small>${collections.length} مجموعات • بيانات مرتبطة بالمشروع</small></div><button id="newCollection" class="primary-btn">＋ مجموعة جديدة</button></div><div class="cms-list">${collections.map(c=>`<article class="cms-manager-card"><div><b>${esc(c.name)}</b><small>${c.items?.length||0} عناصر • ${c.fields?.length||0} حقول • ${esc(c.route||'')}</small></div><div><button class="secondary-btn" data-open-collection="${esc(c.id)}">إدارة</button><button class="secondary-btn" data-add-item="${esc(c.id)}">＋ محتوى</button><button class="danger-btn" data-remove-collection="${esc(c.id)}">حذف</button></div></article>`).join('')||'<div class="tips-card">أنشئ أول Collection لتبدأ محتوى ديناميكيًا.</div>'}</div><div class="tips-card"><b>المحتوى منفصل عن التصميم</b><p>يمكن إعادة استخدام Collection نفسها في صفحات متعددة عبر مكوّن قائمة CMS دون نسخ المحتوى داخل الصفحة.</p></div>`;const modal=showModal($('modalHost'),{title:'مركز المحتوى CMS',body,wide:true});modal.querySelector('#newCollection')?.addEventListener('click',()=>{const name=prompt('اسم المجموعة','المقالات');if(name?.trim()){addCollection(this.store,name.trim());modal.remove();this.showCmsManager()}});modal.querySelectorAll('[data-open-collection]').forEach(b=>b.addEventListener('click',()=>{modal.remove();this.showCmsCollection(b.dataset.openCollection)}));modal.querySelectorAll('[data-add-item]').forEach(b=>b.addEventListener('click',()=>{modal.remove();this.showCmsItem(b.dataset.addItem)}));modal.querySelectorAll('[data-remove-collection]').forEach(b=>b.addEventListener('click',()=>{if(confirm('حذف Collection وعناصرها وكل روابطها؟')){removeCollection(this.store,b.dataset.removeCollection);modal.remove();this.showCmsManager()}}));return modal}
+
+  showCmsCollection(collectionId){const collection=this.store.project.cms?.collections?.find(item=>item.id===collectionId);if(!collection)return null;const types=CMS_FIELD_TYPES.map(([value,label])=>`<option value="${esc(value)}">${esc(label)}</option>`).join('');const body=`<div class="cms-toolbar"><div><b>${esc(collection.name)}</b><small>${esc(collection.key||'')}</small></div><div><button id="addField" class="secondary-btn">＋ حقل</button><button id="addCmsItem" class="primary-btn">＋ عنصر</button></div></div><section class="cms-field-editor"><header><b>حقول المحتوى</b></header><div class="cms-list">${(collection.fields||[]).map(field=>`<article class="cms-manager-card"><div><b>${esc(field.label||field.key)}</b><small>${esc(field.key)} • ${esc(field.type||'text')}${field.required?' • مطلوب':''}</small></div><button class="danger-btn" data-remove-field="${esc(field.id)}">حذف</button></article>`).join('')||'<div class="tips-card">لا توجد حقول.</div>'}</div></section><section class="cms-item-editor"><header><b>العناصر (${collection.items?.length||0})</b></header><div class="cms-list">${(collection.items||[]).map(item=>`<article class="cms-manager-card"><div><b>${esc(item.data?.title||item.slug||'عنصر')}</b><small>${esc(item.slug||'')}</small></div><div><button class="secondary-btn" data-edit-item="${esc(item.id)}">تحرير</button><button class="danger-btn" data-remove-item="${esc(item.id)}">حذف</button></div></article>`).join('')||'<div class="tips-card">لا توجد عناصر بعد.</div>'}</div></section>`;const modal=showModal($('modalHost'),{title:`Collection: ${esc(collection.name)}`,body,wide:true});modal.querySelector('#addField')?.addEventListener('click',()=>{const label=prompt('اسم الحقل','عنوان');if(!label?.trim())return;const key=prompt('المفتاح الإنجليزي/Slug',label.trim());if(!key?.trim())return;const type=prompt(`نوع الحقل (${CMS_FIELD_TYPES.map(x=>x[0]).join(', ')})`,'text')||'text';const normalizedType=CMS_FIELD_TYPES.some(x=>x[0]===type)?type:'text';updateCollection(this.store,collectionId,{fields:[...(collection.fields||[]),{id:`field_${Date.now().toString(36)}`,key:key.trim().toLowerCase().replace(/[^a-z0-9_]+/g,'_'),label:label.trim(),type:normalizedType,required:false}]});modal.remove();this.showCmsCollection(collectionId)});modal.querySelector('#addCmsItem')?.addEventListener('click',()=>{modal.remove();this.showCmsItem(collectionId)});modal.querySelectorAll('[data-remove-field]').forEach(b=>b.addEventListener('click',()=>{if(!confirm('حذف الحقل؟ سيتم إزالة تعريفه فقط ولن يتم حذف بقية العناصر.'))return;updateCollection(this.store,collectionId,{fields:(collection.fields||[]).filter(field=>field.id!==b.dataset.removeField)});modal.remove();this.showCmsCollection(collectionId)}));modal.querySelectorAll('[data-edit-item]').forEach(b=>b.addEventListener('click',()=>{modal.remove();this.showCmsItem(collectionId,b.dataset.editItem)}));modal.querySelectorAll('[data-remove-item]').forEach(b=>b.addEventListener('click',()=>{if(!confirm('حذف العنصر؟'))return;removeItem(this.store,collectionId,b.dataset.removeItem);modal.remove();this.showCmsCollection(collectionId)}));return modal}
+
+  showCmsItem(collectionId,itemId=null){const collection=this.store.project.cms?.collections?.find(item=>item.id===collectionId);if(!collection)return null;const item=collection.items?.find(x=>x.id===itemId)||null;const data=item?.data||{};const inputFor=field=>{const value=String(data[field.key]??(field.key==='title'?(item?.data?.title||''):'')??'');if(['textarea','richtext'].includes(field.type))return `<div class="field"><label>${esc(field.label||field.key)}</label><textarea data-cms-field="${esc(field.key)}" ${field.required?'required':''}>${esc(value)}</textarea></div>`;const type=field.type==='email'?'email':field.type==='number'?'number':'text';return `<div class="field"><label>${esc(field.label||field.key)}</label><input data-cms-field="${esc(field.key)}" type="${type}" value="${esc(value)}" ${field.required?'required':''}></div>`};const body=`<div class="page-settings-grid">${(collection.fields||[]).map(inputFor).join('')||'<div class="tips-card">أضف حقولًا إلى Collection أولًا.</div>'}</div><div class="tips-card"><b>${item?'تحرير عنصر':'عنصر جديد'}</b><p>يتم حفظ البيانات داخل المشروع الحالي ويمكن عرضها عبر مكوّن Collection List.</p></div>`;const modal=showModal($('modalHost'),{title:`${item?'تحرير':'إضافة'} محتوى — ${esc(collection.name)}`,body,wide:true,actions:[{label:'إلغاء',onClick:()=>this.showCmsCollection(collectionId)},{label:item?'حفظ التغييرات':'إنشاء العنصر',kind:'primary',onClick:()=>{const patch={};for(const control of modal.querySelectorAll('[data-cms-field]'))patch[control.dataset.cmsField]=control.value.trim();if(item)updateItem(this.store,collectionId,item.id,patch);else addItem(this.store,collectionId,patch);modal.remove();this.showCmsCollection(collectionId)}}]});return modal}
+
+  showDesignManager(){
+    const t=this.store.project.theme||{},tokens=t.tokens||{},colors=tokens.colors||{},spacing=tokens.spacing||{},radii=tokens.radii||{},typo=tokens.typography||{};
+    const classes=this.store.project.styleLibrary?.classes||{},textStyles=this.store.project.styleLibrary?.textStyles||{},vars=listVariables(this.store.project);
+    const body=`<div class="manager-tabs"><button type="button" class="active" data-design-tab="tokens">Tokens</button><button type="button" data-design-tab="styles">Classes</button><button type="button" data-design-tab="text">Text Styles</button><button type="button" data-design-tab="variables">Variables</button></div>
+      <section data-design-panel="tokens"><div class="design-manager-grid">
+      ${[['primary','Primary',colors.primary||t.primary],['secondary','Secondary',colors.secondary||t.secondary],['accent','Accent',colors.accent||t.accent],['text','Text',colors.text||t.text],['surface','Surface',colors.surface||t.surface],['muted','Muted',colors.muted||t.muted],['line','Line',colors.line||'#e6e8ef']].map(([k,l,v])=>`<div class="field"><label>${l}</label><input data-token="${k}" value="${esc(v)}"></div>`).join('')}
+      ${[['container','Container',tokens.container||1180],['space3','Space MD',spacing.md||12],['radiusMd','Radius MD',radii.md||12],['h1Size','H1 Size',typo.h1?.size||52],['h2Size','H2 Size',typo.h2?.size||36],['bodySize','Body Size',typo.body?.size||16]].map(([k,l,v])=>`<div class="field"><label>${l}</label><input type="number" data-token="${k}" value="${esc(v)}"></div>`).join('')}
+      </div></section>
+      <section data-design-panel="styles" class="hidden"><div class="manager-toolbar"><div><b>Reusable Classes</b><small>${Object.keys(classes).length} Classes</small></div><button id="addDesignClass" class="primary-btn">＋ Class</button></div><div class="style-list">${Object.entries(classes).map(([name,style])=>`<article class="style-row"><div><b>.${esc(name)}</b><small>${Object.keys(style||{}).length} خصائص</small></div><div><button data-edit-class="${esc(name)}">تعديل</button><button data-remove-class="${esc(name)}">حذف</button></div></article>`).join('')||'<div class="tips-card">أنشئ أول Class لاستخدامه عبر عدة عناصر.</div>'}</div></section>
+      <section data-design-panel="text" class="hidden"><div class="manager-toolbar"><div><b>Text Styles</b><small>${Object.keys(textStyles).length} أنماط</small></div><button id="addTextStyle" class="primary-btn">＋ Text Style</button></div><div class="style-list">${Object.entries(textStyles).map(([name,style])=>`<article class="style-row"><div><b>${esc(name)}</b><small>${Object.keys(style||{}).length} خصائص</small></div><div><button data-edit-textstyle="${esc(name)}">تعديل</button><button data-remove-textstyle="${esc(name)}">حذف</button></div></article>`).join('')||'<div class="tips-card">أنشئ نمط نص عالمي ثم طبقه من Inspector.</div>'}</div></section>
+      <section data-design-panel="variables" class="hidden"><div class="manager-toolbar"><div><b>Site Variables</b><small>${vars.length} متغيرات قابلة لإعادة الاستخدام</small></div><button id="addVariable" class="primary-btn">＋ متغير</button></div><div class="style-list">${vars.map(v=>`<article class="style-row"><div><b>${esc(v.name)}</b><small>${esc(v.key)} • ${esc(String(v.type))} • ${esc(String(v.value??''))}</small></div><button data-remove-variable="${esc(v.key)}">حذف</button></article>`).join('')||'<div class="tips-card">المتغيرات تمنع تكرار القيم في مشروع كبير.</div>'}</div></section>
+      <div class="tips-card"><b>نظام بصري مركزي</b><p>Tokens تتحكم بالقيم العامة، Classes تعيد استخدام أنماط، Text Styles توحّد النصوص، وVariables تربط نفس القيمة بعدة عناصر.</p></div>`;
+    const modal=showModal($('modalHost'),{title:'Design System Studio',body,wide:true});
+    modal.querySelectorAll('[data-design-tab]').forEach(b=>b.onclick=()=>{modal.querySelectorAll('[data-design-tab]').forEach(x=>x.classList.toggle('active',x===b));modal.querySelectorAll('[data-design-panel]').forEach(x=>x.classList.toggle('hidden',x.dataset.designPanel!==b.dataset.designTab))});
+    modal.querySelectorAll('[data-token]').forEach(input=>input.addEventListener('change',()=>{const key=input.dataset.token,val=input.type==='number'?Number(input.value):input.value;const map={space3:['spacing','md'],radiusMd:['radii','md'],h1Size:['typography.h1','size'],h2Size:['typography.h2','size'],bodySize:['typography.body','size'],container:['__','container']};if(map[key]){const [group,sub]=map[key];if(group==='__')setDesignToken(this.store,'',sub,Math.max(320,val||1180));else if(group.startsWith('typography.'))setDesignToken(this.store,'typography',group.split('.')[1],{...(typo[group.split('.')[1]]||{}),[sub]:Math.max(1,val||1)});else setDesignToken(this.store,group,sub,Math.max(0,val||0));}else setDesignToken(this.store,'colors',key,val); }));
+    modal.querySelector('#addDesignClass')?.addEventListener('click',()=>{const name=prompt('اسم Class بدون نقطة','card-soft');if(!name?.trim())return;const color=prompt('لون النص (اختياري)','');const background=prompt('الخلفية (اختياري)','');const padding=prompt('Padding رقمي (اختياري)','');defineClass(this.store,name.trim(),{...(color?{color}:{}),...(background?{background}:{}),...(padding!==''&&padding!=null&&!Number.isNaN(Number(padding))?{padding:Number(padding)}:{})});modal.remove();this.showDesignManager()});
+    modal.querySelectorAll('[data-edit-class]').forEach(b=>b.onclick=()=>{const name=b.dataset.editClass,current=classes[name]||{};const padding=prompt('Padding',current.padding??'');const color=prompt('Color',current.color||'');this.store.transact('تعديل Class',p=>{p.styleLibrary.classes[name]={...current,...(padding!==''&&padding!=null?{padding:Number(padding)||0}:{}),...(color!==null?{color}: {})}});modal.remove();this.showDesignManager()});
+    modal.querySelectorAll('[data-remove-class]').forEach(b=>b.onclick=()=>{this.store.transact('حذف Class',p=>{delete p.styleLibrary.classes[b.dataset.removeClass]});modal.remove();this.showDesignManager()});
+    modal.querySelector('#addTextStyle')?.addEventListener('click',()=>{const name=prompt('اسم Text Style','Heading Large');if(!name?.trim())return;const size=prompt('حجم الخط','32');const weight=prompt('سماكة الخط','800');defineTextStyle(this.store,name.trim(),{fontSize:Number(size)||32,fontWeight:Number(weight)||800});modal.remove();this.showDesignManager()});
+    modal.querySelectorAll('[data-remove-textstyle]').forEach(b=>b.onclick=()=>{this.store.transact('حذف Text Style',p=>{delete p.styleLibrary.textStyles[b.dataset.removeTextstyle]});modal.remove();this.showDesignManager()});
+    modal.querySelectorAll('[data-edit-textstyle]').forEach(b=>b.onclick=()=>{const name=b.dataset.editTextstyle,current=textStyles[name]||{};const size=prompt('حجم الخط',current.fontSize??32);const weight=prompt('السماكة',current.fontWeight??800);this.store.transact('تعديل Text Style',p=>{p.styleLibrary.textStyles[name]={...current,fontSize:Number(size)||32,fontWeight:Number(weight)||800}});modal.remove();this.showDesignManager()});
+    modal.querySelector('#addVariable')?.addEventListener('click',()=>{const key=prompt('مفتاح المتغير','brandColor');const value=prompt('القيمة','');if(key?.trim())setVariable(this.store,key.trim(),{name:key.trim(),type:'text',value:value??''});modal.remove();this.showDesignManager()});
+    modal.querySelectorAll('[data-remove-variable]').forEach(b=>b.onclick=()=>{removeVariable(this.store,b.dataset.removeVariable);modal.remove();this.showDesignManager()});
+    return modal;
+  }
+
+  showSiteSettings(){const site=this.store.project.site||{};const brand=site.brand||{};const links=site.links||{};const analytics=site.analytics||{};const indexing=site.indexing||{};const modal=showModal($('modalHost'),{title:'إعدادات الموقع المتقدمة',body:`<div class="manager-tabs"><button class="active" data-site-tab="identity">الهوية</button><button data-site-tab="seo">SEO</button><button data-site-tab="contact">التواصل</button><button data-site-tab="analytics">Analytics</button></div><section data-site-panel="identity"><div class="design-manager-grid"><div class="field"><label>اسم الموقع</label><input data-site="title" value="${esc(site.title||'')}"></div><div class="field"><label>اسم العلامة</label><input data-site="brand.name" value="${esc(brand.name||'')}"></div><div class="field"><label>الشعار</label><input data-site="brand.logo" value="${esc(brand.logo||'')}"></div><div class="field"><label>وصف الموقع</label><textarea data-site="description">${esc(site.description||'')}</textarea></div><div class="field"><label>اللغة</label><input data-site="language" value="${esc(site.language||'ar')}"></div><div class="field"><label>Base URL</label><input data-site="baseUrl" placeholder="https://example.com" value="${esc(site.baseUrl||'')}"></div><div class="field"><label>Favicon</label><input data-site="favicon" value="${esc(site.favicon||'')}"></div><div class="field"><label>صورة المشاركة</label><input data-site="socialImage" value="${esc(site.socialImage||'')}"></div></div></section><section data-site-panel="seo" class="hidden"><div class="design-manager-grid"><div class="field"><label>Robots</label><select data-site="indexing.robots"><option ${indexing.robots==='index,follow'?'selected':''}>index,follow</option><option ${indexing.robots==='noindex,nofollow'?'selected':''}>noindex,nofollow</option></select></div><label class="check-row"><input type="checkbox" data-site-check="indexing.sitemap" ${indexing.sitemap!==false?'checked':''}> إنشاء Sitemap</label><label class="check-row"><input type="checkbox" data-site-check="seo.enabled" ${this.store.project.seo?.enabled!==false?'checked':''}> تفعيل SEO</label></div></section><section data-site-panel="contact" class="hidden"><div class="design-manager-grid"><div class="field"><label>البريد</label><input data-site="links.email" value="${esc(links.email||'')}"></div><div class="field"><label>الهاتف</label><input data-site="links.phone" value="${esc(links.phone||'')}"></div><div class="field"><label>WhatsApp</label><input data-site="links.whatsapp" value="${esc(links.whatsapp||'')}"></div><div class="field"><label>المؤلف</label><input data-site="author" value="${esc(site.author||'')}"></div></div></section><section data-site-panel="analytics" class="hidden"><div class="design-manager-grid"><div class="field"><label>المزود</label><select data-site="analytics.provider"><option value="none" ${analytics.provider==='none'?'selected':''}>بدون</option><option value="google" ${analytics.provider==='google'?'selected':''}>Google</option><option value="matomo" ${analytics.provider==='matomo'?'selected':''}>Matomo</option></select></div><div class="field"><label>Measurement / Site ID</label><input data-site="analytics.measurementId" value="${esc(analytics.measurementId||'')}"></div></div></section><div class="tips-card"><b>مركز إعدادات واحد</b><p>كل هذه القيم تدخل Document Model وتنعكس على التدقيق والتصدير والـmanifest وملفات SEO.</p></div>`});modal.querySelectorAll('[data-site-tab]').forEach(b=>b.onclick=()=>{modal.querySelectorAll('[data-site-tab]').forEach(x=>x.classList.toggle('active',x===b));modal.querySelectorAll('[data-site-panel]').forEach(x=>x.classList.toggle('hidden',x.dataset.sitePanel!==b.dataset.siteTab))});
+    const setPath=(project,path,value)=>{const parts=path.split('.');let obj=project;for(let i=0;i<parts.length-1;i++)obj=obj[parts[i]]||(obj[parts[i]]={});obj[parts.at(-1)]=value};
+    modal.querySelectorAll('[data-site]').forEach(input=>input.addEventListener('change',()=>this.store.transact('تعديل إعدادات الموقع',project=>{const path=input.dataset.site;const value=input.value;setPath(project,path,value);project.meta.description=project.site?.description||project.meta.description})));modal.querySelectorAll('[data-site-check]').forEach(input=>input.addEventListener('change',()=>this.store.transact('تعديل إعدادات الموقع',project=>setPath(project,input.dataset.siteCheck,input.checked))));return modal}
+
+  showAudit(){const result=compileSite(this.store.project);const score=result.diagnostics.score;const list=[...result.diagnostics.issues,...result.diagnostics.warnings,...result.diagnostics.info];const body=`<div class="audit-head"><div class="audit-score"><strong>${score}</strong><span>/ 100</span></div><div><b>فحص الموقع</b><p>${list.length?`${list.length} ملاحظات قابلة للتحسين.`:'الموقع يبدو جيدًا في الفحوصات الأساسية.'}</p></div></div><div class="quality-list">${list.map(item=>`<article class="quality-item ${item.severity==='error'?'bad':item.severity==='warning'?'warn':'good'}"><b>${item.title}</b><small>${item.detail}</small></article>`).join('')||'<div class="quality-item good">✓ لا توجد ملاحظات.</div>'}</div>`;return showModal($('modalHost'),{title:'Site Quality Audit',body,wide:true})}
+
+  createSharedComponent(){if(!this.store.ui.selected){this.toast('حدد عنصرًا أولًا لإنشاء مكون مشترك.');return}const name=prompt('اسم المكون المشترك','مكون مشترك');if(name?.trim()){const symbol=createSymbolFromSelection(this.store,name.trim());if(symbol)this.toast('تم إنشاء المكون المشترك.')}}
+
+  render(){if(!this.booted||this.router.route!==APP_ROUTES.EDITOR)return;this.syncDrawers();this.engine.sync();this.panels.renderLibrary();this.panels.renderLayers();this.panels.renderInteractions();this.inspector.setDevice(this.store.ui.device);this.inspector.render();$('projectName').textContent=this.store.project.meta.name;$('workspaceUser')?.replaceChildren(document.createTextNode(this.auth.user?.name||'الحساب'));$('workspaceMode')?.replaceChildren(document.createTextNode(modeLabel(this.auth.user?.mode)));const status=this.store.saveState==='error'?'⚠ خطأ الحفظ':this.store.saveState==='pending'?'● جارٍ الحفظ':'● محفوظ';$('saveStatus').textContent=status;$('canvasPageTitle').textContent=this.store.activePage()?.name||'الصفحة';$('pageCountLabel').textContent=`${this.store.project.pages.length} ${this.store.project.pages.length===1?'صفحة':'صفحات'}`;$('elementCountLabel').textContent=`${this.store.nodeCount()} عنصر`;$('advancedDevicesBtn').textContent=this.store.ui.advancedDevices?'إغلاق إعدادات الأجهزة':'إعدادات الأجهزة';$('undoBtn').disabled=!this.store.canUndo;$('redoBtn').disabled=!this.store.canRedo;document.querySelectorAll('.device-btn').forEach(button=>button.classList.toggle('active',button.dataset.device===this.store.ui.device))}
+  toast(message){let host=document.querySelector('.toast-wrap');if(!host){host=document.createElement('div');host.className='toast-wrap';document.body.appendChild(host)}const item=document.createElement('div');item.className='toast';item.setAttribute('role','status');item.textContent=message;host.appendChild(item);setTimeout(()=>item.remove(),1800)}
+}
+exports.App = App;
+});
+__modules.set("src/app/auth.js",(exports,__require)=>{
+const {storage} = __require("src/core/storage.js");
+const USERS_KEY='bunaa_v26_users';
+const SESSION_KEY='bunaa_v26_session';
+const LEGACY_USERS_KEYS=['bunaa_v25_users','bunaa_v21_users','bunaa_v20_users','bunaa_v19_users','bunaa_v18_users','bunaa_v17_users','bunaa_v16_users','bunaa_v15_users','bunaa_v14_users','bunaa_v13_users','bunaa_v12_users'];
+const LEGACY_SESSION_KEYS=['bunaa_v25_session','bunaa_v21_session','bunaa_v20_session','bunaa_v19_session','bunaa_v18_session','bunaa_v17_session','bunaa_v16_session','bunaa_v15_session','bunaa_v14_session','bunaa_v13_session','bunaa_v12_session'];
+
+const normalizeEmail=email=>String(email||'').trim().toLowerCase();
+const cleanName=name=>String(name||'').trim().replace(/\s+/g,' ');
+const isEmail=email=>/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+const makeId=(prefix='id')=>`${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2,9)}`;
+
+async function digest(value){
+  const data=new TextEncoder().encode(value);
+  if(globalThis.crypto?.subtle){const hash=await crypto.subtle.digest('SHA-256',data);return [...new Uint8Array(hash)].map(x=>x.toString(16).padStart(2,'0')).join('')}
+  let h=2166136261;for(const byte of data){h^=byte;h=Math.imul(h,16777619)}return (h>>>0).toString(16).padStart(8,'0');
+}
+
+function parse(key){try{const raw=storage.getItem(key);return raw?JSON.parse(raw):null}catch{return null}}
+function loadUsers(){
+  const current=parse(USERS_KEY);if(Array.isArray(current))return current;
+  for(const key of LEGACY_USERS_KEYS){const legacy=parse(key);if(Array.isArray(legacy)){try{storage.setItem(USERS_KEY,JSON.stringify(legacy))}catch{};return legacy}}
+  return [];
+}
+function saveUsers(users){storage.setItem(USERS_KEY,JSON.stringify(users))}
+function loadSession(){
+  const current=parse(SESSION_KEY);if(current)return current;
+  for(const key of LEGACY_SESSION_KEYS){const legacy=parse(key);if(legacy){try{storage.setItem(SESSION_KEY,JSON.stringify(legacy))}catch{};return legacy}}
+  return null;
+}
+class AuthStore{
+  constructor(){this.user=null;this.hydrate()}
+  hydrate(){const session=loadSession();const users=loadUsers();try{if(session?.guest&&session.userId==='guest_local'){this.user={id:'guest_local',name:'تجربة محلية',email:'',mode:'normal',guest:true,createdAt:'local'}}else this.user=session?.userId?users.find(item=>item.id===session.userId)||null:null}catch{this.user=null}return this.user}
+  get authenticated(){return Boolean(this.user)}
+  async register({name,email,password,mode}){
+    const clean=cleanName(name),normalized=normalizeEmail(email);if(clean.length<2)throw new Error('اكتب اسمًا صحيحًا.');if(!isEmail(normalized))throw new Error('اكتب بريدًا إلكترونيًا صحيحًا.');if(String(password||'').length<6)throw new Error('كلمة المرور يجب أن تكون 6 أحرف على الأقل.');if(!['normal','trainee'].includes(mode))throw new Error('اختر نوع الاستخدام.');
+    const users=loadUsers();if(users.some(item=>item.email===normalized))throw new Error('هذا البريد مسجل بالفعل. استخدم تسجيل الدخول.');
+    const salt=makeId('salt'),passwordHash=await digest(`${salt}:${password}`);const user={id:makeId('user'),name:clean,email:normalized,passwordHash,salt,mode,createdAt:new Date().toISOString()};users.push(user);saveUsers(users);this.user=user;this.saveSession();return user;
+  }
+  loginGuest(){this.user={id:'guest_local',name:'تجربة محلية',email:'',mode:'normal',guest:true,createdAt:'local'};this.saveSession({guest:true});return this.user}
+  async login(email,password){const normalized=normalizeEmail(email),users=loadUsers(),user=users.find(item=>item.email===normalized);if(!user)throw new Error('البريد الإلكتروني أو كلمة المرور غير صحيحة.');const passwordHash=await digest(`${user.salt}:${password||''}`);if(passwordHash!==user.passwordHash)throw new Error('البريد الإلكتروني أو كلمة المرور غير صحيحة.');this.user=user;this.saveSession();return user}
+  updateUser(patch={}){if(!this.user)return null;const users=loadUsers(),index=users.findIndex(item=>item.id===this.user.id);if(index<0)return null;const next={...users[index],...patch,id:users[index].id,email:users[index].email};users[index]=next;saveUsers(users);this.user=next;this.saveSession();return next}
+  logout(){this.user=null;try{storage.removeItem(SESSION_KEY)}catch{}}
+  saveSession(extra={}){storage.setItem(SESSION_KEY,JSON.stringify({userId:this.user.id,...extra}))}
+}
+exports.AuthStore = AuthStore;
+});
+__modules.set("src/app/command-palette.js",(exports,__require)=>{
+const {showModal} = __require("src/ui/modal.js");
+class CommandPalette {
+  constructor(app) { this.app = app; this.commands = this.build(); }
+  build() {
+    return [
+      ['new-page', 'صفحة جديدة', () => this.app.panels.pagesModal()],
+      ['templates', 'فتح القوالب', () => this.app.panels.templatesModal()],
+      ['sections', 'فتح الأقسام', () => this.app.panels.sectionsModal()],
+      ['assets', 'مكتبة الوسائط', () => this.app.panels.assetsModal()],
+      ['cms', 'محتوى الموقع CMS', () => this.app.showCmsManager()],
+      ['design', 'نظام التصميم', () => this.app.showDesignManager()],
+      ['audit', 'فحص جودة الموقع', () => this.app.showAudit()],
+      ['navigation', 'إدارة التنقل والقوائم', () => this.app.showNavigationManager()],
+      ['release', 'إدارة الإصدارات', () => this.app.showReleaseManager()],
+      ['backup', 'نسخة احتياطية واستعادة', () => this.app.showBackupManager()],
+      ['preview', 'معاينة الموقع', () => this.app.dialogs.preview()],
+      ['export', 'تصدير الموقع', () => this.app.dialogs.export()],
+      ['save', 'حفظ المشروع', () => this.app.store.persistNow()],
+    ];
+  }
+  open() {
+    const body = `<div class="command-palette"><input id="commandQuery" class="command-search" placeholder="ابحث عن أمر…"><div id="commandList">${this.render(this.commands)}</div></div>`;
+    const modal = showModal(document.getElementById('modalHost'), { title: 'مركز الأوامر', body, wide: true });
+    const input = modal.querySelector('#commandQuery');
+    const renderList = () => { const q = String(input.value || '').trim().toLowerCase(); modal.querySelector('#commandList').innerHTML = this.render(this.commands.filter(item => item[1].toLowerCase().includes(q))); this.wire(modal); };
+    input.addEventListener('input', renderList); this.wire(modal); setTimeout(() => input.focus(), 0); return modal;
+  }
+  render(commands) { return commands.map(([id,label]) => `<button class="command-row" type="button" data-command="${id}"><span>⌘</span><b>${label}</b><small>Enter</small></button>`).join('') || '<div class="tips-card">لا يوجد أمر بهذا الاسم.</div>'; }
+  wire(modal) { modal.querySelectorAll('[data-command]').forEach(button => button.onclick = () => { const item = this.commands.find(command => command[0] === button.dataset.command); modal.remove(); item?.[2]?.(); }); }
+}
+exports.CommandPalette = CommandPalette;
+});
+__modules.set("src/app/managers.js",(exports,__require)=>{
+const {showModal} = __require("src/ui/modal.js");
+const {navigationActions,getMenus} = __require("src/features/navigation/navigation-service.js");
+const {compileSite} = __require("src/features/seo/index.js");
+const {downloadBackup,parseBackup} = __require("src/features/backup/backup-service.js");
+
+const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;' }[c]));
+class StudioManagers {
+  constructor(app) { this.app = app; }
+  get store() { return this.app.store; }
+  get host() { return document.getElementById('modalHost'); }
+  toast(message) { this.app.toast(message); }
+
+  navigation() {
+    const project = this.store.project;
+    const menus = getMenus(project);
+    const menu = menus.find(item => item.id === project.navigation?.headerMenuId) || menus[0];
+    const pages = project.pages || [];
+    const items = menu?.items || [];
+    const body = `<div class="manager-toolbar"><div><b>القائمة الرئيسية</b><small>${items.length} عناصر • ${pages.length} صفحات</small></div><div class="manager-toolbar-actions"><button id="managerAddPage" class="primary-btn">＋ صفحة</button><button id="managerAddUrl" class="secondary-btn">＋ رابط خارجي</button></div></div><div class="navigation-manager">${items.map((item,index)=>{const target=pages.find(page=>page.id===item.targetId);return `<article class="navigation-row"><span class="nav-order">${index+1}</span><div><b>${esc(item.label||target?.name||'رابط')}</b><small>${item.type==='page'?(target?`صفحة: ${esc(target.name)}`:'صفحة مفقودة'):`${esc(item.url||'رابط خارجي')}`}</small></div><div class="navigation-actions"><button data-nav-up="${esc(item.id)}" ${index===0?'disabled':''}>↑</button><button data-nav-down="${esc(item.id)}" ${index===items.length-1?'disabled':''}>↓</button><button data-nav-remove="${esc(item.id)}">×</button></div></article>`;}).join('') || '<div class="tips-card">لا توجد عناصر.</div>'}</div><div class="tips-card"><b>التنقل مرتبط بالنموذج</b><p>تغيير ترتيب الصفحات لا يلزم أن يغيّر ترتيب القائمة؛ القائمة أصبحت كيانًا مستقلًا ويمكن أن تحتوي صفحات وروابط خارجية.</p></div>`;
+    const modal = showModal(this.host,{title:'Navigation Manager',body,wide:true});
+    modal.querySelector('#managerAddPage')?.addEventListener('click',()=>{
+      if (!menu) return;
+      const page = pages.find(p => !items.some(item => item.type === 'page' && item.targetId === p.id));
+      if (!page) { this.toast('كل الصفحات الظاهرة موجودة في القائمة.'); return; }
+      navigationActions.addMenuItem(this.store,menu.id,{label:page.name,type:'page',targetId:page.id}); modal.remove(); this.navigation();
+    });
+    modal.querySelector('#managerAddUrl')?.addEventListener('click',()=>{
+      if (!menu) return;
+      const label = prompt('اسم الرابط','رابط خارجي'); const url = prompt('الرابط','https://');
+      if (label?.trim() && url?.trim()) { navigationActions.addMenuItem(this.store,menu.id,{label:label.trim(),type:'url',url:url.trim(),newTab:true}); modal.remove(); this.navigation(); }
+    });
+    modal.querySelectorAll('[data-nav-up]').forEach(button=>button.onclick=()=>{navigationActions.reorderMenuItem(this.store,menu.id,button.dataset.navUp,'up');modal.remove();this.navigation()});
+    modal.querySelectorAll('[data-nav-down]').forEach(button=>button.onclick=()=>{navigationActions.reorderMenuItem(this.store,menu.id,button.dataset.navDown,'down');modal.remove();this.navigation()});
+    modal.querySelectorAll('[data-nav-remove]').forEach(button=>button.onclick=()=>{navigationActions.removeMenuItem(this.store,menu.id,button.dataset.navRemove);modal.remove();this.navigation()});
+    return modal;
+  }
+
+  release() {
+    const state = this.app.releaseService.inspect();
+    const release = state.release;
+    const audit = state.diagnostics;
+    const issues = [...audit.issues,...audit.warnings];
+    const body = `<div class="release-summary"><div class="release-stat"><b>الحالة</b><strong>${esc(release.status||'draft')}</strong></div><div class="release-stat"><b>رقم الإصدار</b><strong>${Number(release.version||1)}</strong></div><div class="release-stat"><b>الجودة</b><strong>${audit.score}/100</strong></div></div><div class="quality-list">${issues.map(item=>`<article class="quality-item ${item.severity==='error'?'bad':'warn'}"><b>${esc(item.title)}</b><small>${esc(item.detail)}</small></article>`).join('') || '<article class="quality-item good">✓ لا توجد مشكلات أساسية تمنع الإصدار.</article>'}</div><div class="modal-actions"><button id="releasePrepare" class="secondary-btn">تجهيز الإصدار</button><button id="releasePublish" class="primary-btn" ${state.canPublish?'':'disabled'}>اعتماد محلي</button>${release.status==='published'?'<button id="releaseDraft" class="danger-btn">إرجاع لمسودة</button>':''}</div><div class="tips-card"><b>الإصدار المحلي</b><p>هذه الخطوة تغير حالة المشروع وتسجل رقم الإصدار داخل ملف المشروع. الاستضافة والنشر على نطاق فعلي تحتاج خدمة نشر خارجية لاحقًا.</p></div>`;
+    const modal = showModal(this.host,{title:'Release Manager',body,wide:true});
+    modal.querySelector('#releasePrepare')?.addEventListener('click',()=>{this.app.releaseService.markReady();modal.remove();this.release()});
+    modal.querySelector('#releasePublish')?.addEventListener('click',()=>{const result=this.app.releaseService.publish();if(!result.ok){this.toast('أصلح أخطاء التدقيق أولًا.');return}modal.remove();this.toast('تم اعتماد الإصدار محليًا.');this.release()});
+    modal.querySelector('#releaseDraft')?.addEventListener('click',()=>{this.app.releaseService.unpublish();modal.remove();this.release()});
+    return modal;
+  }
+
+  backupProject(project=this.store.project) {
+    return downloadBackup(project);
+  }
+
+  backup() {
+    const body = `<div class="backup-layout"><article class="backup-card"><span class="eyebrow">EXPORT</span><b>نسخة احتياطية كاملة</b><p>النسخة تشمل الصفحات، CMS، المكونات المشتركة، الوسائط، Design System، التفاعلات، التنقل وإعدادات SEO.</p><button id="downloadBackup" class="primary-btn">تنزيل .bunaa.json</button></article><article class="backup-card"><span class="eyebrow">RESTORE</span><b>استعادة مشروع</b><p>سيتم إنشاء نسخة جديدة من الملف المستورد حتى لا يتم الكتابة فوق المشروع الحالي.</p><input id="backupInput" type="file" accept=".json,.bunaa.json,application/json"><button id="restoreBackup" class="secondary-btn" disabled>استعادة كمشروع جديد</button></article></div>`;
+    const modal = showModal(this.host,{title:'Backup & Restore',body,wide:true});
+    modal.querySelector('#downloadBackup')?.addEventListener('click',()=>downloadBackup(this.store.project));
+    const input=modal.querySelector('#backupInput'); const restore=modal.querySelector('#restoreBackup');
+    input?.addEventListener('change',()=>{restore.disabled=!(input.files?.length)});
+    restore?.addEventListener('click',async()=>{const file=input.files?.[0];if(!file)return;try{const project=parseBackup(await file.text());const saved=this.app.repository.importProject(this.app.auth.user.id,project,{duplicateId:true});this.store.openProject(saved.meta.id);modal.remove();this.app.showWorkspace(saved.meta.id);this.toast('تمت الاستعادة كمشروع مستقل.')}catch(error){this.toast(error?.message||'ملف غير صالح.')}});
+    return modal;
+  }
+
+  siteReport() {
+    const result = compileSite(this.store.project);
+    return result;
+  }
+}
+exports.StudioManagers = StudioManagers;
+});
+__modules.set("src/app/router.js",(exports,__require)=>{
+const APP_ROUTES=Object.freeze({AUTH:'auth',DASHBOARD:'dashboard',EDITOR:'editor'});
+class AppRouter{
+  constructor(){this.route=APP_ROUTES.AUTH;this.listeners=new Set()}
+  go(route,payload=null){if(!Object.values(APP_ROUTES).includes(route))return false;const changed=this.route!==route;this.route=route;for(const fn of [...this.listeners]){try{fn(route,payload,changed)}catch(error){console.error('AppRouter listener failed',error)}}return changed}
+  subscribe(fn){this.listeners.add(fn);return()=>this.listeners.delete(fn)}
+}
+exports.APP_ROUTES = APP_ROUTES;
+exports.AppRouter = AppRouter;
+});
+__modules.set("src/catalog/components.js",(exports,__require)=>{
+const {makeNode} = __require("src/core/model.js");
+const iconMap={heading:'H',text:'T',button:'↗',link:'↗',image:'▧',section:'▦',container:'▣',grid:'▤',columns:'Ⅱ',stack:'≡',hero:'✦',card:'□',navbar:'☰',footer:'▰',list:'☷',quote:'❝',divider:'—',spacer:'↕',gallery:'▧',video:'▶',audio:'♪',form:'☷',input:'⌨',textarea:'▤',select:'▾',checkbox:'✓',radio:'◉',search:'⌕',file:'↥',tabs:'▤',accordion:'⌄',dropdown:'▾',alert:'!',badge:'●',progress:'◐',stats:'123',timeline:'↝',pricing:'$',testimonial:'★',table:'▤',chart:'▥',calendar:'▦',product:'◫',faq:'?',rating:'★★★★★',counter:'01',social:'◎',gradient:'◩',glass:'◈',marquee:'→',spaced:'↔',group:'◌'};
+const def=(type,label,category,description,factory)=>({type,label,category,description,icon:iconMap[type]||'◇',factory});
+const t=text=>makeNode('text',{text},{fontSize:16,color:'#626b7c',lineHeight:1.8});
+const h=text=>makeNode('heading',{text},{fontSize:42,fontWeight:800,lineHeight:1.15,color:'#171b2a'});
+const btn=text=>makeNode('button',{text,url:'#',action:'url'},{background:'#5b5ce2',color:'#fff',fontSize:13,fontWeight:800,paddingY:11,paddingX:20,radius:11});
+const demoImage=()=>{const svg='<svg xmlns="http://www.w3.org/2000/svg" width="900" height="500"><defs><linearGradient id="g"><stop stop-color="#eeeeff"/><stop offset="1" stop-color="#e8f5ef"/></linearGradient></defs><rect width="900" height="500" fill="url(#g)"/><circle cx="190" cy="210" r="90" fill="#5b5ce2" opacity=".15"/><rect x="350" y="150" width="310" height="28" rx="14" fill="#5b5ce2" opacity=".22"/><rect x="350" y="205" width="240" height="16" rx="8" fill="#7a8498" opacity=".22"/></svg>';return makeNode('image',{src:'data:image/svg+xml;charset=utf-8,'+encodeURIComponent(svg),alt:'صورة توضيحية'},{width:320,height:180,radius:16,objectFit:'cover'})};
+const categories=[['all','الكل'],['basic','أساسي'],['layout','تخطيط'],['media','وسائط'],['forms','نماذج'],['ui','واجهة'],['data','بيانات'],['marketing','تسويق'],['visual','زخرفة']];
+const definitions=[
+ def('heading','عنوان','basic','عنوان رئيسي أو فرعي',()=>h('عنوان جديد')),
+ def('text','نص','basic','فقرة قابلة للتحرير',()=>t('اكتب نصًا واضحًا ومفيدًا هنا.')),
+ def('button','زر','basic','إجراء أو رابط',()=>btn('ابدأ الآن')),
+ def('link','رابط','basic','رابط داخلي أو خارجي',()=>makeNode('link',{text:'اقرأ المزيد',url:'#'},{color:'#5b5ce2'})),
+ def('list','قائمة','basic','نقاط مرتبة',()=>makeNode('list',{items:'الميزة الأولى\nالميزة الثانية\nالميزة الثالثة'},{})),
+ def('quote','اقتباس','basic','نص بارز',()=>makeNode('quote',{text:'جملة مهمة.'},{background:'#f6f7fb',padding:20,radius:14})),
+ def('divider','فاصل','basic','فاصل بصري',()=>makeNode('divider',{}, {color:'#e4e7ef',marginTop:18,marginBottom:18})),
+ def('spacer','مساحة','basic','مسافة فارغة',()=>makeNode('spacer',{}, {height:40})),
+ def('section','قسم','layout','قسم عريض',()=>makeNode('section',{}, {background:'#f7f8fc',padding:40},[h('قسم جديد'),t('محتوى القسم هنا.')])),
+ def('container','حاوية','layout','حاوية بعرض محدد',()=>makeNode('container',{}, {maxWidth:1040,paddingX:24})),
+ def('grid','شبكة','layout','شبكة أعمدة',()=>makeNode('grid',{count:3,gap:16},{display:'grid',gridTemplateColumns:'repeat(3,minmax(0,1fr))',gap:16},[makeNode('card',{title:'بطاقة 1',text:'وصف'}),makeNode('card',{title:'بطاقة 2',text:'وصف'}),makeNode('card',{title:'بطاقة 3',text:'وصف'})])),
+ def('columns','أعمدة','layout','تخطيط عمودي/أفقي',()=>makeNode('columns',{count:2,gap:18},{display:'grid',gridTemplateColumns:'repeat(2,minmax(0,1fr))',gap:18})),
+ def('stack','مجموعة','layout','ترتيب رأسي',()=>makeNode('stack',{gap:12},{display:'flex',flexDirection:'column',gap:12})),
+ def('spaced','توزيع','layout','توزيع بين طرفين',()=>makeNode('spaced',{gap:12},{display:'flex',justifyContent:'space-between',alignItems:'center',gap:12})),
+ def('group','مجموعة عامة','layout','حاوية بسيطة',()=>makeNode('group',{},{})),
+ def('hero','واجهة افتتاحية','layout','Hero جاهز',()=>makeNode('hero',{}, {background:'linear-gradient(135deg,#f3f3ff,#eef8f3)',padding:58},[h('ابنِ صفحة تليق بفكرتك'),t('صمّم بسرعة وعاين النتيجة كما يراها الزائر.'),btn('ابدأ الآن')])),
+ def('card','بطاقة','ui','بطاقة محتوى',()=>makeNode('card',{title:'عنوان البطاقة',text:'وصف قصير مفيد.',button:'اعرف المزيد',url:'#'},{background:'#fff',border:'1px solid #e7e9ef',padding:20,radius:15})),
+ def('navbar','شريط تنقل','ui','تنقل الموقع',()=>makeNode('navbar',{brand:'بَنّاء',links:['الرئيسية','الخدمات','من نحن','تواصل']},{background:'#fff',paddingY:15,paddingX:22,borderBottom:'1px solid #eceef3'})),
+ def('footer','تذييل','ui','نهاية الصفحة',()=>makeNode('footer',{brand:'بَنّاء',text:'كل الحقوق محفوظة.'},{background:'#151924',color:'#fff',padding:28})),
+ def('tabs','تبويبات','ui','محتوى متعدد',()=>makeNode('tabs',{items:['نبذة','المميزات','الأسئلة']},{background:'#fff',padding:14,border:'1px solid #e9ebf1',radius:12})),
+ def('accordion','أسئلة قابلة للفتح','ui','تفاصيل قابلة للطي',()=>makeNode('accordion',{items:['ما هو بَنّاء؟','هل أستطيع التصدير؟','هل أحتاج إلى كود؟']},{background:'#fff',padding:14,border:'1px solid #e6e8ef',radius:12})),
+ def('dropdown','قائمة منسدلة','ui','اختيارات تفاعلية',()=>makeNode('dropdown',{label:'اختر خيارًا',items:['الخيار الأول','الخيار الثاني','الخيار الثالث']},{})),
+ def('alert','تنبيه','ui','رسالة حالة',()=>makeNode('alert',{text:'هذه رسالة تنبيه مفيدة.'},{background:'#eef3ff',color:'#4e61a6',padding:14,radius:11})),
+ def('badge','شارة','ui','وسم صغير',()=>makeNode('badge',{text:'جديد'},{background:'#f0f0ff',color:'#5759c9',paddingY:5,paddingX:10,radius:99,fontSize:10,fontWeight:800})),
+ def('progress','تقدم','ui','نسبة إنجاز',()=>makeNode('progress',{value:72,label:'التقدم 72%'},{color:'#5b5ce2'})),
+ def('stats','إحصاءات','ui','أرقام سريعة',()=>makeNode('stats',{items:[['+120','مشروع'],['98%','رضا'],['24','قالب']]},{background:'#fff',padding:18,radius:14,border:'1px solid #e7e9ef'})),
+ def('timeline','خط زمني','ui','مراحل',()=>makeNode('timeline',{items:[['01','الفكرة'],['02','التصميم'],['03','الإطلاق']]},{})),
+ def('pricing','خطط الأسعار','ui','خطط اشتراك',()=>makeNode('pricing',{plans:[['أساسي','مجاني'],['احترافي','$12'],['فريق','$29']]},{})),
+ def('testimonial','رأي عميل','ui','شهادة',()=>makeNode('testimonial',{quote:'الأداة جعلت البناء أوضح وأسرع.',name:'عميل تجريبي'},{background:'#f8f8ff',padding:20,radius:14})),
+ def('image','صورة','media','صورة مع alt',demoImage),
+ def('gallery','معرض','media','صور متعددة',()=>makeNode('gallery',{count:6},{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:10})),
+ def('video','فيديو','media','تضمين فيديو',()=>makeNode('video',{url:'https://www.youtube.com/embed/ScMzIvxBSi4',title:'فيديو تجريبي'},{height:260,radius:14})),
+ def('audio','صوت','media','مشغل صوت',()=>makeNode('audio',{src:'',title:'ملف صوتي'},{})),
+ def('form','نموذج','forms','نموذج إدخال',()=>makeNode('form',{}, {background:'#fff',padding:20,border:'1px solid #e6e8ef',radius:14},[factory('input'),factory('input'),factory('textarea'),factory('checkbox'),btn('إرسال')])),
+ def('input','حقل','forms','حقل نصي',()=>makeNode('input',{label:'الاسم',type:'text',placeholder:'اكتب هنا…'},{})),
+ def('textarea','منطقة نص','forms','نص متعدد الأسطر',()=>makeNode('textarea',{label:'الرسالة',placeholder:'اكتب هنا…'},{})),
+ def('select','اختيار','forms','قائمة خيارات',()=>makeNode('select',{label:'اختر',items:['الأول','الثاني','الثالث']},{})),
+ def('checkbox','مربع اختيار','forms','اختيار',()=>makeNode('checkbox',{label:'أوافق على الشروط'},{})),
+ def('radio','خيارات','forms','اختيار واحد',()=>makeNode('radio',{label:'الخيار الأول'},{})),
+ def('search','بحث','forms','حقل بحث',()=>makeNode('search',{label:'بحث',placeholder:'ابحث…'},{})),
+ def('file','رفع ملف','forms','اختيار ملف',()=>makeNode('file',{label:'رفع ملف'},{})),
+ def('table','جدول','data','بيانات صفوف وأعمدة',()=>makeNode('table',{headers:['البند','الحالة','القيمة'],rows:[['صفحة','جاهزة','100%'],['تفاعل','جاهز','80%'],['تصدير','جاهز','100%']]},{})),
+ def('chart','مخطط','data','رسم أعمدة بسيط',()=>makeNode('chart',{values:[40,65,52,78,90],labels:['ينا','فبر','مار','أبر','ماي']},{})),
+ def('calendar','تقويم','data','تقويم بسيط',()=>makeNode('calendar',{month:'هذا الشهر'},{})),
+ def('product','منتج','data','بطاقة منتج',()=>makeNode('product',{name:'منتج تجريبي',price:'49',currency:'ر.س',cta:'أضف إلى السلة',url:'#'},{})),
+ def('faq','سؤال شائع','data','سؤال وإجابة',()=>makeNode('faq',{question:'كيف يعمل؟',answer:'عدّل المحتوى ثم عاين أو صدّر المشروع.'},{})),
+ def('rating','تقييم','data','تقييم نجوم',()=>makeNode('rating',{value:4,label:'4 من 5'},{})),
+ def('counter','عداد','data','رقم متحرك',()=>makeNode('counter',{value:1250,suffix:'+'},{})),
+ def('social','روابط اجتماعية','data','روابط اجتماعية',()=>makeNode('social',{items:['X','Instagram','LinkedIn']},{})),
+ def('gradient','تدرج','visual','خلفية متدرجة',()=>makeNode('gradient',{}, {height:120,background:'linear-gradient(135deg,#5b5ce2,#20a06a)',radius:14})),
+ def('glass','بطاقة زجاجية','visual','مظهر زجاجي',()=>makeNode('glass',{text:'محتوى زجاجي'},{background:'rgba(255,255,255,.65)',backdropFilter:'blur(10px)',padding:22,radius:16,border:'1px solid rgba(255,255,255,.7)'})),
+ def('marquee','شريط نص','visual','نص أفقي',()=>makeNode('marquee',{text:'بَنّاء • تصميم • تفاعل • تصدير'},{background:'#171b2a',color:'#fff',padding:12,radius:10}))
+];
+
+definitions.push(
+ def('richtext','محتوى منسق','basic','محتوى طويل منظم',()=>makeNode('richtext',{text:'عنوان فرعي\nمحتوى منسق متعدد الأسطر.'},{fontSize:15,lineHeight:1.9,maxWidth:820})),
+ def('avatar','صورة شخصية','media','صورة دائرية مع اسم',()=>makeNode('avatar',{name:'اسم المستخدم',src:''},{display:'flex',alignItems:'center',gap:10})),
+ def('logo','شعار','basic','شعار نصي أو صورة',()=>makeNode('logo',{text:'علامتي'},{fontSize:20,fontWeight:900})),
+ def('breadcrumbs','مسار تنقل','ui','تسلسل مسار الصفحة',()=>makeNode('breadcrumbs',{items:['الرئيسية','الخدمات','التفاصيل']},{fontSize:11,color:'#727a8c'})),
+ def('chip-list','شرائح','ui','قائمة وسوم صغيرة',()=>makeNode('chip-list',{items:['جديد','مميز','سريع']},{})),
+ def('feature-list','قائمة مزايا','ui','مزايا مع أوصاف',()=>makeNode('feature-list',{},{})),
+ def('team','فريق','ui','بطاقات أعضاء الفريق',()=>makeNode('team',{},{})),
+ def('stepper','خطوات','ui','خطوات مرقمة',()=>makeNode('stepper',{},{})),
+ def('code','كتلة كود','basic','عرض كود قابل للنسخ',()=>makeNode('code',{code:'const site = "Bunaa";'},{background:'#151924',color:'#f7f8fc',padding:18,radius:12})),
+ def('embed','محتوى مضمن','media','Iframe لمصدر خارجي',()=>makeNode('embed',{url:'https://example.com',title:'محتوى مضمن'},{height:320})),
+ def('collection-list','قائمة CMS','data','عرض عناصر مجموعة محتوى',()=>makeNode('collection-list',{collectionId:'',limit:6},{display:'grid',gridTemplateColumns:'repeat(3,minmax(0,1fr))',gap:14})),
+ def('video-card','بطاقة فيديو','media','بطاقة مرئية للفيديو',()=>makeNode('video-card',{title:'فيديو تعريفي',duration:'02:40',url:'#'},{background:'#171b2a',color:'#fff',padding:20,radius:14})),
+ def('compare','مقارنة','data','جدول مقارنة مبسط',()=>makeNode('compare',{items:[['الميزة','الأساسي','الاحترافي'],['صفحات','3','غير محدود'],['تخصيص','أساسي','متقدم']]},{})),
+ def('callout','ملاحظة بارزة','ui','تنبيه معلوماتي',()=>makeNode('callout',{title:'نقطة مهمة',text:'ضع هنا المعلومة التي تريد أن يلاحظها الزائر.'},{background:'#fff7e8',padding:18,radius:14})),
+ def('spinner','تحميل','visual','مؤشر تحميل',()=>makeNode('spinner',{}, {width:44,height:44,border:'4px solid #e5e7ee',borderTopColor:'#5b5ce2',borderRadius:999})),
+ def('countdown','عداد تنازلي','data','عد تنازلي بصري',()=>makeNode('countdown',{days:3,hours:12,minutes:20},{fontSize:28,fontWeight:900})),
+ def('cookie-banner','شريط موافقة','ui','شريط خصوصية جاهز',()=>makeNode('cookie-banner',{text:'نستخدم ملفات ضرورية لتحسين تجربة الموقع.',accept:'موافق'},{})),
+ def('cta','قسم دعوة إجراء','marketing','دعوة إجراء مركزية',()=>makeNode('cta',{title:'ابدأ اليوم',text:'خطوة واحدة تفصلك عن الإطلاق.',button:'ابدأ الآن'},{background:'token:primary',color:'#fff',padding:32,radius:16})),
+ def('newsletter','اشتراك بريد','marketing','نموذج اشتراك بسيط',()=>makeNode('newsletter',{title:'اشترك في التحديثات',placeholder:'بريدك الإلكتروني',button:'اشتراك'},{})),
+ def('lead-form','نموذج عملاء محتملين','marketing','جمع اسم وبريد واحتياج',()=>makeNode('lead-form',{title:'تحدث معنا',button:'إرسال الطلب'},{})),
+ def('social-proof','دليل اجتماعي','marketing','شعارات وتقييم قصير',()=>makeNode('social-proof',{label:'يثق بنا أكثر من 1,000 مستخدم'},{padding:16})),
+ def('highlight','ميزة مميزة','marketing','بطاقة تركز على ميزة واحدة',()=>makeNode('highlight',{title:'أسرع طريقة',text:'أنجز المهمة في دقائق لا ساعات.'},{padding:24,radius:16,background:'#f5f6ff'})),
+ def('announcement','شريط إعلان','marketing','إعلان أعلى الموقع',()=>makeNode('announcement',{text:'جديد: أطلقنا إصدارًا أكبر من بَنّاء.',button:'اعرف المزيد',url:'#'},{background:'#171b2a',color:'#fff',padding:10})),
+ def('feature-comparison','مقارنة مزايا','marketing','مقارنة بين باقات',()=>makeNode('feature-comparison',{columns:['الأساسي','الاحترافي'],rows:[['دعم','✓','✓'],['تخصيص','—','✓'],['تحليلات','—','✓']]},{})),
+ def('quote-banner','شريط اقتباس','marketing','عبارة مؤثرة قصيرة',()=>makeNode('quote-banner',{text:'التجربة الجيدة تبدأ من وضوح الفكرة.'},{fontSize:24,fontWeight:800,padding:28})),
+ def('schedule','برنامج','data','جدول مواعيد بسيط',()=>makeNode('schedule',{items:[['09:00','التسجيل'],['10:00','الجلسة الأولى'],['12:00','استراحة']]},{})),
+ def('icon-text','أيقونة ونص','ui','وحدة مختصرة مع أيقونة',()=>makeNode('icon-text',{icon:'✦',title:'ميزة مهمة',text:'وصف الميزة في سطرين.'},{display:'flex',gap:12,padding:16})),
+ def('image-text','صورة ونص','marketing','قسم ثنائي بالصورة والمحتوى',()=>makeNode('image-text',{title:'فكرة واضحة',text:'ضع هنا وصفًا يشرح الفكرة أو الخدمة.',image:''},{display:'grid',gridTemplateColumns:'1fr 1fr',gap:24,padding:24})),
+ def('feature-grid','شبكة مزايا','marketing','مزايا متعددة في شبكة',()=>makeNode('feature-grid',{items:[['سريع','أداء واضح'],['مرن','تخصيص واسع'],['جاهز','تصدير مباشر']]},{})),
+ def('contact-card','بطاقة تواصل','marketing','عنوان وتواصل',()=>makeNode('contact-card',{title:'تواصل معنا',email:'hello@example.com',phone:'+968 9000 0000',address:'مسقط، عُمان'},{padding:20,radius:14})),
+ def('stat-card','إحصائية','data','رقم رئيسي مع وصف',()=>makeNode('stat-card',{value:'98%',label:'رضا العملاء',trend:'+12% هذا الشهر'},{padding:20,radius:14})),
+ def('pricing-card','بطاقة سعر','marketing','سعر وخطة وإجراء',()=>makeNode('pricing-card',{name:'احترافي',price:'12 ر.ع',period:'شهريًا',button:'ابدأ الآن',features:['10 صفحات','دعم سريع','تصدير']},{padding:22,radius:16})),
+ def('testimonial-card','شهادة عميل','marketing','شهادة مختصرة',()=>makeNode('testimonial-card',{quote:'تجربة واضحة وسريعة.',name:'عميل تجريبي',role:'مستخدم'},{padding:22,radius:16})),
+ def('logo-cloud','سحابة شعارات','marketing','شعارات مرنة للعلامات والشركاء مع روابط وصور',()=>makeNode('logo-cloud',{title:'شركاؤنا',items:[{name:'NOVA',image:demoImage().props.src,url:'#'},{name:'Orbit',image:'',url:'#'},{name:'Pixel',image:'',url:'#'},{name:'Acme',image:'',url:'#'}]}, {display:'grid',gap:16,padding:12})),
+ def('logo-row','صف شعارات','marketing','شعارات شركاء أو عملاء',()=>makeNode('logo-row',{items:['Acme','Nova','Orbit','Pixel']},{display:'flex',gap:24,alignItems:'center',justifyContent:'center',padding:20})),
+ def('social-links','أزرار اجتماعية','marketing','روابط اجتماعية بارزة',()=>makeNode('social-links',{items:[['Instagram','#'],['LinkedIn','#'],['X','#']]},{display:'flex',gap:10})),
+ def('download','زر تحميل','basic','رابط تحميل ملف',()=>makeNode('download',{text:'تحميل الملف',url:'#',filename:'file.pdf'},{background:'#171b2a',color:'#fff',paddingY:11,paddingX:18,radius:10})),
+ def('map','خريطة مكان','media','بطاقة موقع دون خدمة خارجية',()=>makeNode('map',{title:'موقعنا',address:'مسقط، سلطنة عُمان',lat:'23.5880',lng:'58.3829'},{padding:24,radius:16,background:'#f3f4f8'})),
+ def('back-to-top','عودة للأعلى','ui','زر يعود لأعلى الصفحة',()=>makeNode('back-to-top',{text:'↑ أعلى الصفحة'},{background:'#fff',border:'1px solid #e6e8ef',paddingY:8,paddingX:12,radius:999})),
+ def('language-switcher','تبديل اللغة','ui','اختيار لغة واجهة الموقع',()=>makeNode('language-switcher',{languages:['AR','EN']},{border:'1px solid #e6e8ef',padding:8,radius:10})),
+ def('divider-label','فاصل بعنوان','ui','فاصل مزود بعنوان',()=>makeNode('divider-label',{text:'أو'},{paddingY:12})),
+ def('notice-bar','شريط ملاحظة','marketing','رسالة علوية قابلة للعرض',()=>makeNode('notice-bar',{text:'ملاحظة مهمة للزوار',button:'تفاصيل',url:'#'},{background:'#f5f6ff',padding:10,radius:10}))
+);
+definitions.push(
+ def('hero-split','واجهة افتتاحية بصورة','marketing','عنوان وصورة ودعوة إجراء بتخطيط مرن',()=>makeNode('hero-split',{eyebrow:'حل عملي لفكرتك',title:'قدّم فكرتك بوضوح',text:'واجهة افتتاحية قابلة للتخصيص تجمع النص والصورة وزر الإجراء.',image:demoImage().props.src,button:'ابدأ الآن',url:'#'}, {display:'grid',gridTemplateColumns:'minmax(0,1fr) minmax(0,1fr)',gap:28,alignItems:'center',padding:28,background:'linear-gradient(135deg,#f3f3ff,#eef8f3)',radius:18})),
+ def('blog-grid','شبكة مقالات','marketing','بطاقات مقالات مع صورة ورابط',()=>makeNode('blog-grid',{title:'أحدث المقالات',items:[{title:'كيف تبدأ مشروعك؟',excerpt:'خطوات عملية لبداية منظمة.',image:demoImage().props.src,url:'#',category:'دليل'},{title:'اختيار التصميم المناسب',excerpt:'نقاط تساعدك في اختيار تجربة واضحة.',image:demoImage().props.src,url:'#',category:'تصميم'},{title:'تحسين تجربة المستخدم',excerpt:'تفاصيل صغيرة تصنع فرقًا كبيرًا.',image:demoImage().props.src,url:'#',category:'تجربة'}]}, {display:'grid',gridTemplateColumns:'repeat(3,minmax(0,1fr))',gap:16})),
+ def('product-grid','شبكة منتجات','marketing','بطاقات منتجات مع تفاصيل وروابط وإضافة للسلة',()=>makeNode('product-grid',{title:'منتجات مختارة',cartLabel:'أضف للسلة',items:[{name:'المنتج الأول',price:'12 ر.ع',description:'وصف قصير للمنتج.',image:demoImage().props.src,url:'#',cta:'التفاصيل',badge:'الأكثر طلبًا'},{name:'المنتج الثاني',price:'8 ر.ع',description:'وصف موجز يساعد العميل.',image:demoImage().props.src,url:'#',cta:'التفاصيل'},{name:'المنتج الثالث',price:'18 ر.ع',description:'معلومة مهمة عن المنتج.',image:demoImage().props.src,url:'#',cta:'التفاصيل'}]}, {display:'grid',gridTemplateColumns:'repeat(3,minmax(0,1fr))',gap:16})),
+ def('portfolio-grid','معرض أعمال مع تصفية','marketing','تصفية حية حسب فئة العمل',()=>makeNode('portfolio-grid',{items:[{title:'هوية العلامة',category:'هوية',image:demoImage().props.src,url:'#'},{title:'صفحة هبوط',category:'ويب',image:demoImage().props.src,url:'#'},{title:'واجهة متجر',category:'متجر',image:demoImage().props.src,url:'#'}]}, {display:'grid',gap:12})),
+ def('filterable-gallery','معرض قابل للتصفية','media','معرض صور وفلاتر تعمل داخل الصفحة',()=>makeNode('filterable-gallery',{items:[{title:'تصميم 1',category:'تصميم',image:demoImage().props.src,url:'#'},{title:'صورة 2',category:'تصوير',image:demoImage().props.src,url:'#'},{title:'تصميم 3',category:'تصميم',image:demoImage().props.src,url:'#'}]}, {display:'grid',gap:12})),
+ def('testimonial-carousel','دوّار آراء العملاء','marketing','تنقل بين الشهادات بالسابق والتالي',()=>makeNode('testimonial-carousel',{items:[{quote:'تجربة مرتبة وسهلة الاستخدام.',name:'سارة',role:'صاحبة مشروع'},{quote:'أستطيع عرض المحتوى بشكل أوضح.',name:'خالد',role:'مصمم'},{quote:'التعديل والمعاينة في مكان واحد.',name:'ليلى',role:'مسوقة'}]}, {padding:20,background:'#f8f8ff',radius:16})),
+ def('contact-form','نموذج تواصل','forms','تحقق حقيقي من الاسم والبريد والرسالة مع حالة واضحة',()=>makeNode('contact-form',{title:'تواصل معنا',text:'اترك بياناتك وسنعرف كيف يمكننا مساعدتك.',button:'إرسال الرسالة'}, {display:'grid',gap:12,maxWidth:680,padding:22,background:'#fff',border:'1px solid #e7e9ef',radius:16})),
+ def('process-steps','خطوات العمل','marketing','مراحل عمل مرقمة مع شرح لكل مرحلة',()=>makeNode('process-steps',{items:[{title:'التخطيط',description:'حدد الهدف والجمهور والمحتوى.'},{title:'التصميم',description:'رتب المكونات والمظهر والاستجابة.'},{title:'الإطلاق',description:'عاين واختبر ثم صدّر الموقع.'}]}, {display:'grid',gridTemplateColumns:'repeat(3,minmax(0,1fr))',gap:14})),
+ def('trust-bar','شريط الثقة والعملاء','marketing','شعارات ونقطة تقييم مختصرة',()=>makeNode('trust-bar',{title:'موثوق من فرق تعمل بذكاء',rating:'4.8',items:['NOVA','ORBIT','PIXEL','ACME']}, {padding:18,background:'#f7f8fc',radius:14})),
+ def('faq-list','قائمة أسئلة وأجوبة','data','أسئلة متكررة قابلة للفتح',()=>makeNode('faq-list',{title:'الأسئلة الشائعة',items:[{question:'هل يمكن تعديل العناصر؟',answer:'نعم، اختر أي عنصر وعدّل محتواه ومظهره.'},{question:'هل تدعم المعاينة الأجهزة؟',answer:'نعم، يمكن معاينة سطح المكتب واللوحي والهاتف.'},{question:'هل يمكن تنزيل الموقع؟',answer:'نعم، نزّل ZIP يحتوي صفحات الموقع والأصول التي أمكن تضمينها.'}]}, {display:'grid',gap:8,maxWidth:900})),
+
+ def('team-grid','شبكة فريق العمل','marketing','ملفات أعضاء الفريق وصورهم وروابطهم',()=>makeNode('team-grid',{title:'فريقنا',items:[{name:'سارة أحمد',role:'مصممة تجربة المستخدم',bio:'تحوّل احتياجات المستخدم إلى تجارب سهلة.',image:demoImage().props.src,url:'#'},{name:'علي سالم',role:'مطور واجهات',bio:'يبني واجهات سريعة ومتجاوبة.',image:demoImage().props.src,url:'#'},{name:'ليلى عمر',role:'استراتيجية المحتوى',bio:'تجعل الرسالة واضحة وقريبة من الناس.',image:demoImage().props.src,url:'#'}]}, {display:'grid',gridTemplateColumns:'repeat(3,minmax(0,1fr))',gap:16})),
+ def('service-grid','شبكة الخدمات','marketing','بطاقات خدمات مع روابط إجراءات',()=>makeNode('service-grid',{title:'كيف نساعدك؟',items:[{icon:'✦',title:'التصميم',description:'واجهة متناسقة لكل الشاشات.',url:'#'},{icon:'⌘',title:'التطوير',description:'مكونات واضحة وقابلة للتوسع.',url:'#'},{icon:'↗',title:'الإطلاق',description:'تجهيز الموقع للنشر.',url:'#'}]}, {display:'grid',gridTemplateColumns:'repeat(3,minmax(0,1fr))',gap:16})),
+ def('feature-bento','شبكة مزايا Bento','marketing','تخطيط مزايا غير متماثل مع صور وروابط',()=>makeNode('feature-bento',{title:'مصمم ليتناسب مع عملك',items:[{title:'ابدأ بسرعة',description:'مكونات عملية تختصر وقت البناء.',image:demoImage().props.src,url:'#'},{title:'تحكم بالتفاصيل',description:'عدّل كل جزء بوضوح.',image:demoImage().props.src,url:'#'},{title:'متجاوب افتراضيًا',description:'تخطيط مرن للأجهزة المختلفة.',url:'#'}]}, {display:'grid',gridTemplateColumns:'repeat(3,minmax(0,1fr))',gap:14})),
+ def('event-list','قائمة فعاليات','marketing','فعاليات بموعد ومكان ورابط تسجيل',()=>makeNode('event-list',{title:'فعاليات قادمة',items:[{date:'24 أكتوبر',title:'ورشة تجربة المستخدم',location:'مسقط — حضور مباشر',description:'أساسيات تصميم التجربة.',url:'#'},{date:'02 نوفمبر',title:'لقاء مجتمع المطورين',location:'عبر الإنترنت',description:'تبادل الأفكار والتجارب.',url:'#'}]}, {display:'grid',gap:12})),
+ def('review-grid','شبكة تقييمات','marketing','آراء العملاء مع تقييم واسم الجهة',()=>makeNode('review-grid',{title:'ماذا يقول المستخدمون؟',items:[{quote:'واجهة واضحة وتوفّر وقتًا حقيقيًا.',name:'مها',company:'فريق منتج',rating:5},{quote:'المعاينة المباشرة جعلت التعديل أسهل.',name:'سالم',company:'مستقل',rating:5},{quote:'مجموعة مكونات مفيدة ومتنوعة.',name:'نور',company:'مشروع ناشئ',rating:4}]}, {display:'grid',gridTemplateColumns:'repeat(3,minmax(0,1fr))',gap:14})),
+ def('job-board','قائمة وظائف','marketing','فرص عمل بروابط تقديم مباشرة',()=>makeNode('job-board',{title:'انضم إلى الفريق',items:[{title:'مصمم منتج',location:'عن بعد',type:'دوام كامل',description:'خبرة في واجهات ومنتجات رقمية.',url:'#'},{title:'مطور واجهات',location:'مسقط / عن بعد',type:'دوام كامل',description:'خبرة في HTML وCSS وJavaScript.',url:'#'}]}, {display:'grid',gap:12}))
+);
+const definitionsByType=Object.fromEntries(definitions.map(d=>[d.type,d]));
+const factory=type=>definitionsByType[type]?.factory?.()||makeNode('text',{text:`عنصر غير معروف: ${type}`},{});
+const supportedTypes=new Set(definitions.map(d=>d.type));
+const nodeIcon=type=>iconMap[type]||'◇';
+const searchDefinitions=(q='',category='all')=>{const n=String(q).trim().toLowerCase();return definitions.filter(d=>(category==='all'||d.category===category)&&(!n||`${d.type} ${d.label} ${d.description}`.toLowerCase().includes(n)))};
+exports.categories = categories;
+exports.definitions = definitions;
+exports.definitionsByType = definitionsByType;
+exports.factory = factory;
+exports.supportedTypes = supportedTypes;
+exports.nodeIcon = nodeIcon;
+exports.searchDefinitions = searchDefinitions;
+});
+__modules.set("src/catalog/sections.js",(exports,__require)=>{
+const {makeNode} = __require("src/core/model.js");
+const {factory} = __require("src/catalog/components.js");
+const heading=text=>makeNode('heading',{text},{fontSize:38,fontWeight:850,lineHeight:1.12,marginBottom:10});
+const body=text=>makeNode('text',{text},{fontSize:15,lineHeight:1.85,color:'token:muted',maxWidth:760});
+const section=(children,style={})=>makeNode('section',{},{background:'token:surface',paddingY:'token:space6',paddingX:'token:space4',...style},children);
+const grid=(children,count=3)=>makeNode('grid',{count,stackOnMobile:true},{display:'grid',gridTemplateColumns:`repeat(${count},minmax(0,1fr))`,gap:'token:space4'},children);
+const sections=[
+  {id:'hero',name:'Hero + دعوة إجراء',description:'افتتاحية قوية مع عنوان ووصف وزر.',build:()=>section([makeNode('heading',{text:'حوّل فكرتك إلى تجربة واضحة'},{fontSize:52,fontWeight:900}),body('ابدأ من هيكل جاهز ثم عدّل النصوص والألوان والمسافات حتى تصبح الصفحة لك.'),makeNode('button',{text:'ابدأ الآن',url:'#',action:'url'},{background:'token:primary',color:'#fff',paddingY:'token:space3',paddingX:'token:space5',radius:'token:radiusMd',fontWeight:850})],{background:'linear-gradient(135deg,#f3f3ff,#eef8f3)',paddingY:64})},
+  {id:'features',name:'مميزات',description:'ثلاث أو أربع بطاقات لشرح القيمة.',build:()=>section([heading('لماذا هذا المنتج؟'),body('قسّم القيمة إلى نقاط قصيرة يسهل فهمها.'),grid([factory('card'),factory('card'),factory('card')],3)])},
+  {id:'stats',name:'أرقام ونتائج',description:'شريط إحصائيات سريع.',build:()=>section([heading('أرقام تتكلم'),factory('stats')],{background:'token:soft'})},
+  {id:'split',name:'صورة + محتوى',description:'قسم ثنائي مرن للمحتوى والصورة.',build:()=>section([makeNode('columns',{count:2,gap:28},{display:'grid',gridTemplateColumns:'1fr 1fr',gap:28},[factory('image'),makeNode('stack',{gap:12},{display:'flex',flexDirection:'column',gap:12},[heading('قصة بسيطة وواضحة'),body('استخدم هذا القسم لتشرح المنتج، الخدمة أو الخطوة التالية.'),factory('button')])])])},
+  {id:'testimonial',name:'شهادات',description:'آراء العملاء مع تقييم.',build:()=>section([heading('ماذا يقول المستخدمون؟'),grid([factory('testimonial'),factory('testimonial')],2)])},
+  {id:'pricing',name:'الأسعار',description:'ثلاث خطط مرتبة.',build:()=>section([heading('خطط تناسبك'),factory('pricing')],{background:'token:soft'})},
+  {id:'faq',name:'أسئلة شائعة',description:'أسئلة قابلة للفتح.',build:()=>section([heading('أسئلة شائعة'),factory('accordion')])},
+  {id:'contact',name:'تواصل',description:'نموذج تواصل جاهز.',build:()=>section([heading('تواصل معنا'),body('أرسل رسالتك وسنعود إليك.'),factory('form')],{background:'token:soft'})},
+  {id:'cta',name:'دعوة ختامية',description:'قسم أخير يركز على الإجراء.',build:()=>section([heading('جاهز للخطوة التالية؟'),body('اختر الإجراء الأهم وضعه في مركز الصفحة.'),factory('button')],{background:'linear-gradient(135deg,#171b2a,#303655)',color:'#fff',paddingY:54})},
+  {id:'announcement',name:'إعلان علوي',description:'شريط إعلان لخبر أو عرض.',build:()=>section([factory('announcement')],{paddingY:10,paddingX:18})},
+  {id:'logos',name:'شعارات وثقة',description:'شعارات عملاء وشركاء.',build:()=>section([heading('يثق بنا الكثيرون'),factory('logo-cloud'),factory('social-proof')],{background:'token:soft'})},
+  {id:'team',name:'فريق العمل',description:'أعضاء الفريق والأدوار.',build:()=>section([heading('فريقنا'),body('عرّف الزائر بالأشخاص خلف المنتج.'),factory('team')])},
+  {id:'process',name:'كيف نعمل',description:'خطوات عملية واضحة.',build:()=>section([heading('كيف نعمل؟'),factory('stepper')],{background:'token:soft'})},
+  {id:'blog',name:'شبكة مقالات',description:'بطاقات لمقالات أو محتوى CMS.',build:()=>section([heading('آخر المحتوى'),factory('collection-list'),grid([factory('card'),factory('card'),factory('card')],3)])},
+  {id:'comparison',name:'مقارنة الباقات',description:'اختيار واضح بين الباقات.',build:()=>section([heading('اختر ما يناسبك'),factory('feature-comparison'),factory('compare')],{background:'token:soft'})},
+  {id:'newsletter',name:'اشتراك',description:'التقاط البريد والاشتراكات.',build:()=>section([factory('newsletter')])},
+  {id:'team-cta',name:'فريق + دعوة',description:'دمج التعريف بالفريق مع الإجراء.',build:()=>section([factory('team'),factory('cta')])},
+  {id:'social-proof',name:'ثقة وشعارات',description:'دمج أرقام الثقة والشعارات والشهادات.',build:()=>section([factory('social-proof'),factory('logo-row'),grid([factory('testimonial-card'),factory('testimonial-card')],2)],{background:'token:soft'})},
+  {id:'image-text',name:'صورة + قصة',description:'قسم قصصي متوازن للمحتوى التسويقي.',build:()=>section([factory('image-text')])},
+  {id:'contact-details',name:'بيانات التواصل',description:'تفاصيل الموقع والهاتف والبريد.',build:()=>section([heading('نحن قريبون منك'),grid([factory('contact-card'),factory('map')],2)])},
+  {id:'feature-grid',name:'شبكة المزايا',description:'شبكة مرنة من وحدات القيمة.',build:()=>section([heading('كل ما تحتاجه'),factory('feature-grid')])},
+  {id:'pricing-cards',name:'باقات الأسعار',description:'بطاقات أسعار مستقلة قابلة لإعادة الترتيب.',build:()=>section([heading('اختر خطتك'),grid([factory('pricing-card'),factory('pricing-card'),factory('pricing-card')],3)],{background:'token:soft'})},
+  {id:'video',name:'فيديو تعريفي',description:'فيديو مع عنوان ودعوة.',build:()=>section([heading('شاهد كيف يعمل'),factory('video'),factory('cta')])},
+  {id:'schedule',name:'البرنامج والمواعيد',description:'جدول فعالية أو دورة.',build:()=>section([heading('البرنامج'),factory('schedule'),factory('timeline')],{background:'token:soft'})},
+  {id:'content-rich',name:'محتوى طويل',description:'مقدمة ومحتوى منسق وأسئلة شائعة.',build:()=>section([heading('دليل شامل'),factory('richtext'),factory('faq')])},
+  {id:'download',name:'تحميل مورد',description:'عنوان مع رابط لتحميل ملف أو دليل.',build:()=>section([heading('حمّل الدليل'),body('احصل على الملف وابدأ الآن.'),factory('download')],{background:'token:soft'})},
+  {id:'minimal',name:'قسم بسيط',description:'قسم نظيف لرسالة واحدة وإجراء.',build:()=>section([factory('icon-text'),factory('button')],{paddingY:34})},
+  {id:'notice',name:'ملاحظة واشتراك',description:'دمج رسالة قصيرة مع اشتراك البريد.',build:()=>section([factory('notice-bar'),factory('newsletter')])},
+  {id:'case-study',name:'دراسة حالة',description:'صورة ونتائج وشهادة عميل.',build:()=>section([factory('image-text'),factory('stat-card'),factory('testimonial-card')],{background:'token:soft'})},
+];
+const sectionById=id=>sections.find(x=>x.id===id);
+const materializeSection=id=>sectionById(id)?.build?.()||section([],{});
+exports.sections = sections;
+exports.sectionById = sectionById;
+exports.materializeSection = materializeSection;
+});
+__modules.set("src/catalog/templates.js",(exports,__require)=>{
+const {makeNode,makePage,normalizeProject} = __require("src/core/model.js");
+const {uid,deepClone} = __require("src/core/utils.js");
+const {factory} = __require("src/catalog/components.js");
+const localImage=()=>factory('image');const hero=()=>factory('hero');const card=()=>factory('card');const heading=text=>makeNode('heading',{text},{fontSize:38,fontWeight:800,color:'#171b2a',align:'right'});const bodyText=text=>makeNode('text',{text},{fontSize:14,color:'#636c7e',lineHeight:1.8,align:'right'});const button=(text,url='#')=>makeNode('button',{text,url,action:'url'},{background:'#5b5ce2',color:'#fff',fontSize:12,fontWeight:800,paddingY:10,paddingX:18,radius:10,align:'right'});const section=(children,style={})=>makeNode('section',{}, {background:'#fff',padding:42,...style},children);const grid=(children,count=3)=>makeNode('grid',{count,gap:16},{display:'grid',gridTemplateColumns:`repeat(${count},minmax(0,1fr))`,gap:16},children);const navbar=()=>makeNode('navbar',{brand:'بَنّاء',links:['الرئيسية','الخدمات','من نحن','تواصل']},{background:'#fff',paddingY:14,paddingX:22,borderBottom:'1px solid #e7e9ef'});const footer=()=>makeNode('footer',{brand:'بَنّاء',text:'كل الحقوق محفوظة.'},{background:'#151924',color:'#fff',padding:28});
+function landing(){return {name:'Landing احترافي',description:'صفحة هبوط كاملة للشركات والمنتجات.',thumbnail:'linear',pages:[makePage('الرئيسية',[navbar(),hero(),section([heading('لماذا بَنّاء؟'),bodyText('كل ما تحتاجه لبناء موقع سريع وواضح وقابل للتخصيص.'),grid([card(),card(),card()])]),section([heading('جاهز للانطلاق؟'),bodyText('حوّل فكرتك إلى موقع يعمل الآن.'),button('ابدأ مجانًا')],{background:'#f5f6ff'}),footer()],'home')]}}
+function agency(){return {name:'شركة وخدمات',description:'صفحة شركة مع خدمات وأرقام وشهادات.',thumbnail:'agency',pages:[makePage('الرئيسية',[navbar(),section([hero()]),section([heading('خدماتنا'),grid([card(),card(),card()],3)]),section([heading('نتائج نعتز بها'),factory('stats'),factory('testimonial')],{background:'#f7f8fb'}),footer()]),makePage('الخدمات',[navbar(),section([heading('الخدمات'),bodyText('مجموعة خدمات عملية يمكنك تعديلها.'),grid([card(),card(),card(),card()],2)]),footer()]),makePage('تواصل',[navbar(),section([heading('تواصل معنا'),factory('form')]),footer()])]}}
+function portfolio(){return {name:'معرض أعمال',description:'صفحة أعمال ومشاريع قابلة للعرض.',thumbnail:'portfolio',pages:[makePage('الرئيسية',[navbar(),hero(),section([heading('أعمال مختارة'),grid([localImage(),localImage(),localImage(),localImage()],2)]),section([heading('من عملائنا'),factory('testimonial'),factory('rating')]),footer()])]}}
+function store(){return {name:'متجر بسيط',description:'واجهة متجر ببطاقات منتجات وأسعار.',thumbnail:'store',pages:[makePage('الرئيسية',[navbar(),section([heading('منتجات مختارة'),bodyText('اختر ما يناسبك بسهولة.'),grid([factory('product'),factory('product'),factory('product')])]),section([heading('الأسئلة الشائعة'),factory('accordion')]),footer()]),makePage('منتج',[navbar(),section([localImage(),heading('منتج مميز'),bodyText('وصف المنتج وسعره ومعلوماته.'),button('أضف إلى السلة')]),footer()])]}}
+function education(){return {name:'تعليمي',description:'صفحة تعليمية مع وحدات ومراحل.',thumbnail:'edu',pages:[makePage('الدروس',[navbar(),section([heading('تعلم خطوة بخطوة'),factory('progress'),grid([card(),card(),card()],3)]),section([heading('الأسئلة الشائعة'),factory('faq'),factory('faq')]),footer()]),makePage('عن الدورة',[navbar(),section([hero()]),section([heading('المحتوى'),factory('timeline')]),footer()])]}}
+function blog(){return {name:'مدونة',description:'قالب مقالات مع بطاقات وتصنيفات.',thumbnail:'blog',pages:[makePage('الرئيسية',[navbar(),section([heading('آخر المقالات'),grid([card(),card(),card(),card()],2)]),section([heading('اشترك'),factory('input'),button('اشتراك')],{background:'#f7f8fb'}),footer()]),makePage('مقال',[navbar(),section([heading('عنوان المقال'),bodyText('محتوى المقال التجريبي…'),bodyText('يمكنك استبدال النص وإضافة صور ومحتويات أخرى.')]),footer()])]}}
+function dashboard(){return {name:'لوحة تحكم',description:'واجهة بيانات وإحصاءات.',thumbnail:'dashboard',pages:[makePage('لوحة البيانات',[navbar(),section([heading('ملخص اليوم'),factory('stats'),grid([factory('chart'),factory('chart')],2)]),section([heading('العمليات الأخيرة'),factory('table')]),footer()])]}}
+function restaurant(){return {name:'مطعم',description:'صفحة مطعم مع قائمة وطريقة تواصل.',thumbnail:'food',pages:[makePage('الرئيسية',[navbar(),section([hero()]),section([heading('قائمة اليوم'),grid([card(),card(),card(),card()],2)]),section([heading('احجز طاولتك'),factory('form')]),footer()])]}}
+function personal(){return {name:'شخصي',description:'صفحة تعريفية شخصية أنيقة.',thumbnail:'personal',pages:[makePage('الرئيسية',[section([heading('مرحبًا، أنا صاحب المشروع'),bodyText('نبذة قصيرة يمكن تعديلها بسهولة.'),button('تواصل معي')]),section([heading('مهاراتي'),factory('progress'),factory('progress'),factory('progress')],{background:'#f7f8fb'}),footer()])]}}
+function saas(){return {name:'SaaS منتج رقمي',description:'واجهة منتج اشتراكي مع مزايا وأسعار وشهادات.',thumbnail:'saas',pages:[makePage('الرئيسية',[navbar(),section([hero()]),section([heading('مزايا المنتج'),grid([factory('feature-list'),factory('feature-list'),factory('highlight')],3)]),section([heading('الأسعار'),factory('pricing')],{background:'#f7f8fb'}),section([heading('لماذا نحن؟'),grid([factory('testimonial'),factory('testimonial')])]),section([factory('newsletter')]),footer()]),makePage('التسعير',[navbar(),section([heading('الخطط والأسعار'),factory('pricing'),factory('compare')]),footer()])]}}
+function startup(){return {name:'Startup',description:'صفحة إطلاق شركة ناشئة سريعة.',thumbnail:'startup',pages:[makePage('الرئيسية',[navbar(),factory('announcement'),section([hero()]),section([heading('أرقام سريعة'),factory('stats')]),section([heading('كيف نعمل'),factory('stepper')],{background:'#f7f8fb'}),section([factory('cta')]),footer()])]}}
+function event(){return {name:'فعالية',description:'صفحة فعالية أو مؤتمر مع برنامج وتسجيل.',thumbnail:'event',pages:[navbarPage(),makePage('البرنامج',[navbar(),section([heading('البرنامج'),factory('timeline'),factory('schedule')]),footer()]),makePage('التسجيل',[navbar(),section([heading('سجل حضورك'),factory('lead-form')]),footer()])]}}
+function clinic(){return {name:'عيادة وخدمة',description:'موقع عيادة مع خدمات ومواعيد وتواصل.',thumbnail:'clinic',pages:[makePage('الرئيسية',[navbar(),section([hero()]),section([heading('خدماتنا'),grid([card(),card(),card()],3)]),section([heading('احجز موعدًا'),factory('lead-form')],{background:'#f7f8fb'}),footer()]),makePage('الخدمات',[navbar(),section([heading('الخدمات'),grid([card(),card(),card(),card()],2)]),footer()])]}}
+function realEstate(){return {name:'عقارات',description:'واجهة عقارية مع بطاقات وقائمة.',thumbnail:'realestate',pages:[makePage('الرئيسية',[navbar(),section([hero()]),section([heading('عقارات مختارة'),grid([factory('product'),factory('product'),factory('product')],3)]),section([heading('لماذا نحن'),factory('feature-list')],{background:'#f7f8fb'}),footer()]),makePage('تفاصيل',[navbar(),section([heading('تفاصيل العقار'),factory('image'),factory('compare'),factory('lead-form')]),footer()])]}}
+function cv(){return {name:'سيرة شخصية',description:'صفحة شخصية للعمل والأعمال.',thumbnail:'cv',pages:[makePage('الرئيسية',[section([factory('logo'),heading('مرحبًا، أنا صاحب الملف'),bodyText('مصمم ومطور يهتم بالتجارب الرقمية الواضحة.'),factory('social-proof'),button('تواصل معي')]),section([heading('المهارات'),factory('progress'),factory('progress'),factory('progress')],{background:'#f7f8fb'}),section([heading('أعمال مختارة'),grid([localImage(),localImage(),localImage()],3)]),footer()])]}}
+function navbarPage(){return makePage('التسجيل',[navbar(),section([hero()]),footer()])}
+function ecommerce(){return {name:'متجر متكامل',description:'واجهة متجر متعددة الصفحات مع منتج وسلة وFAQ.',thumbnail:'ecommerce',pages:[makePage('الرئيسية',[navbar(),section([hero()]),section([heading('الأكثر مبيعًا'),grid([factory('product'),factory('product'),factory('product'),factory('product')],4)]),section([factory('logo-row'),factory('social-proof')],{background:'#f7f8fb'}),footer()]),makePage('المنتجات',[navbar(),section([heading('كل المنتجات'),factory('collection-list'),grid([factory('product'),factory('product'),factory('product'),factory('product')],4)]),footer()]),makePage('السلة',[navbar(),section([heading('مراجعة الطلب'),factory('table'),factory('cta')]),footer()])]}}
+function creator(){return {name:'صانع محتوى',description:'صفحة منشئ محتوى مع أعمال واشتراك وشبكات اجتماعية.',thumbnail:'creator',pages:[makePage('الرئيسية',[navbar(),section([factory('avatar'),heading('مرحبًا، أنا صانع المحتوى'),bodyText('نبذة عنك وعن المجال الذي تقدمه.'),factory('social-links'),button('تواصل')]),section([heading('أحدث الأعمال'),grid([factory('video-card'),factory('video-card'),factory('video-card')],3)]),section([factory('newsletter')]),footer()])]}}
+function nonprofit(){return {name:'مؤسسة غير ربحية',description:'موقع مبادرة أو مؤسسة مع أهداف وتبرعات ونتائج.',thumbnail:'nonprofit',pages:[makePage('الرئيسية',[navbar(),section([hero()]),section([heading('أثرنا'),factory('stats'),factory('feature-grid')],{background:'#f7f8fb'}),section([heading('قصص المجتمع'),factory('testimonial-card'),factory('image-text')]),section([factory('cta')]),footer()]),makePage('عن المبادرة',[navbar(),section([heading('من نحن'),factory('richtext')]),footer()]),makePage('تبرع',[navbar(),section([heading('ادعم المبادرة'),factory('pricing-card'),factory('lead-form')]),footer()])]}}
+function course(){return {name:'دورة مدفوعة',description:'موقع دورة احترافي مع دروس وأسعار وتسجيل.',thumbnail:'course',pages:[makePage('الرئيسية',[navbar(),section([hero()]),section([heading('ماذا ستتعلم؟'),factory('feature-grid')]),section([heading('المنهج'),factory('stepper'),factory('timeline')],{background:'#f7f8fb'}),section([factory('pricing-card')]),footer()]),makePage('المنهج',[navbar(),section([heading('المحتوى الكامل'),factory('accordion'),factory('progress')]),footer()]),makePage('التسجيل',[navbar(),section([heading('ابدأ التعلم'),factory('lead-form')]),footer()])]}}
+function freelancer(){return {name:'مستقل وخدمات',description:'عرض خدمات مستقل مع مشاريع وتسعير وتواصل.',thumbnail:'freelance',pages:[makePage('الرئيسية',[navbar(),section([factory('avatar'),heading('أحوّل الأفكار إلى منتجات رقمية'),bodyText('خدمات تصميم وتطوير وتجارب رقمية.'),factory('cta')]),section([heading('الخدمات'),grid([factory('card'),factory('card'),factory('card')],3)]),section([heading('أعمال مختارة'),grid([factory('image-text'),factory('image-text')],2)]),footer()]),makePage('الخدمات',[navbar(),section([heading('الخدمات'),factory('feature-grid'),factory('pricing')]),footer()]),makePage('تواصل',[navbar(),section([heading('تواصل معنا'),factory('contact-card'),factory('lead-form')]),footer()])]}}
+function appLanding(){return {name:'منتج تطبيق',description:'صفحة تطبيق جوال مع مزايا ولقطات وأسئلة.',thumbnail:'app',pages:[makePage('الرئيسية',[navbar(),section([hero(),factory('download')]),section([heading('داخل التطبيق'),grid([localImage(),localImage(),localImage()],3)]),section([heading('لماذا التطبيق؟'),factory('feature-grid')]),section([factory('faq'),factory('cta')]),footer()])]}}
+function conference(){return {name:'مؤتمر',description:'مؤتمر متعدد الصفحات مع متحدثين وجدول وتسجيل.',thumbnail:'conference',pages:[makePage('الرئيسية',[navbar(),section([hero()]),section([heading('المتحدثون'),factory('team')]),section([heading('لماذا تحضر؟'),factory('feature-grid')]),section([factory('cta')]),footer()]),makePage('البرنامج',[navbar(),section([heading('البرنامج'),factory('schedule'),factory('timeline')]),footer()]),makePage('التسجيل',[navbar(),section([heading('سجل الآن'),factory('lead-form'),factory('contact-card')]),footer()])]}}
+function hospitality(){return {name:'فندق وإقامة',description:'موقع إقامة مع غرف ومزايا وحجز.',thumbnail:'hotel',pages:[makePage('الرئيسية',[navbar(),section([hero()]),section([heading('الغرف'),grid([factory('image-text'),factory('image-text')],2)]),section([heading('الخدمات'),factory('feature-grid')],{background:'#f7f8fb'}),section([heading('احجز'),factory('lead-form')]),footer()]),makePage('الغرف',[navbar(),section([heading('الغرف والأجنحة'),factory('gallery'),grid([factory('pricing-card'),factory('pricing-card')],2)]),footer()])]}}
+function jobBoard(){return {name:'وظائف وتوظيف',description:'واجهة وظائف وصفحات شركة وتقديم.',thumbnail:'jobs',pages:[makePage('الرئيسية',[navbar(),section([hero()]),section([heading('الوظائف المفتوحة'),factory('collection-list'),grid([factory('card'),factory('card'),factory('card')],3)]),section([heading('لماذا تعمل معنا؟'),factory('feature-grid')]),footer()]),makePage('الوظيفة',[navbar(),section([heading('مسمى وظيفي'),factory('richtext'),factory('lead-form')]),footer()])]}}
+const baseTemplates=[landing(),agency(),portfolio(),store(),education(),blog(),dashboard(),restaurant(),personal(),saas(),startup(),event(),clinic(),realEstate(),cv(),ecommerce(),creator(),nonprofit(),course(),freelancer(),appLanding(),conference(),hospitality(),jobBoard()];
+const templates=baseTemplates;
+const templateByName=name=>templates.find(template=>template.name===name);
+function materializeTemplate(template){const t=deepClone(template);for(const page of t.pages){page.id=uid('page');page.slug=undefined;page.seo={title:page.name,description:'',image:''};page.nodes=(page.nodes||[]).map(remapTree)}const project=normalizeProject({version:12,meta:{name:t.name},pages:t.pages,theme:t.theme,devices:t.devices,assets:t.assets,variables:t.variables,interactions:t.interactions,settings:t.settings,activePageId:t.pages[0].id});for(const page of project.pages){page.nodes=page.nodes||[]}return {name:t.name,description:t.description,pages:project.pages,theme:project.theme,devices:project.devices,assets:project.assets,variables:project.variables,interactions:project.interactions,settings:project.settings,activePageId:project.activePageId}}
+function remapTree(node){const copy=deepClone(node);copy.id=uid('node');copy.children=(copy.children||[]).map(remapTree);return copy}
+const validateTemplate=t=>Boolean(t?.name&&Array.isArray(t.pages)&&t.pages.length>0&&t.pages.every(p=>p.name&&Array.isArray(p.nodes)));
+exports.templates = templates;
+exports.templateByName = templateByName;
+exports.materializeTemplate = materializeTemplate;
+exports.validateTemplate = validateTemplate;
+});
+__modules.set("src/core/assets.js",(exports,__require)=>{
+const {deepClone,uid} = __require("src/core/utils.js");
+const ASSET_KINDS = Object.freeze(['image','video','audio','document','font','other']);
+const EXT_BY_TYPE={
+  'image/jpeg':'jpg','image/png':'png','image/gif':'gif','image/webp':'webp','image/svg+xml':'svg','image/avif':'avif',
+  'video/mp4':'mp4','video/webm':'webm','video/ogg':'ogv','audio/mpeg':'mp3','audio/wav':'wav','audio/ogg':'ogg','audio/webm':'weba',
+  'application/pdf':'pdf','text/plain':'txt','application/zip':'zip','application/json':'json','font/woff':'woff','font/woff2':'woff2','font/ttf':'ttf','font/otf':'otf'
+};
+const PREFIX_BY_KIND={image:'img',video:'video',audio:'audio',document:'file',font:'font',other:'file'};
+function extensionForType(type='',name=''){
+  const mime=String(type||'').toLowerCase().split(';')[0];
+  if(EXT_BY_TYPE[mime]) return EXT_BY_TYPE[mime];
+  const match=String(name||'').match(/\.([a-z0-9]{1,8})$/i); return match?.[1]?.toLowerCase()||'bin';
+}
+function assetKind(type='',name=''){
+  const mime=String(type||'').toLowerCase();
+  if(mime.startsWith('image/')) return 'image';
+  if(mime.startsWith('video/')) return 'video';
+  if(mime.startsWith('audio/')) return 'audio';
+  if(mime.startsWith('font/')) return 'font';
+  if(mime==='application/pdf' || mime.includes('document') || /\.(pdf|docx?|xlsx?|pptx?|txt)$/i.test(String(name||''))) return 'document';
+  return 'other';
+}
+function prefixForAsset(raw={}){return PREFIX_BY_KIND[assetKind(raw.type,raw.name)]||'file'}
+
+function nextSequence(assets,kind){
+  const prefix=PREFIX_BY_KIND[kind]||'file';
+  let max=0;
+  for(const asset of normalizeAssets(assets)){
+    if(asset.kind!==kind && !String(asset.name||'').startsWith(prefix)) continue;
+    const match=String(asset.name||'').match(new RegExp(`^${prefix}(\\d+)$`,'i'));
+    if(match) max=Math.max(max,Number(match[1])||0);
+  }
+  return max+1;
+}
+function generatedAssetName(assets,raw={}){
+  if(typeof raw==='string') raw={type:raw};
+  const kind=assetKind(raw.type,raw.originalName||raw.name);
+  return `${PREFIX_BY_KIND[kind]||'file'}${nextSequence(assets,kind)}`;
+}
+function normalizeAsset(asset={},existing=[]){
+  const originalName=String(asset.originalName||asset.name||'وسيط');
+  const kind=ASSET_KINDS.includes(asset.kind)?asset.kind:assetKind(asset.type,originalName);
+  let name=String(asset.name||'').trim();
+  if(!name || /\.[a-z0-9]{1,8}$/i.test(name)) name=name.replace(/\.[a-z0-9]{1,8}$/i,'');
+  if(!/^((img|video|audio|file|font)\d+)$/i.test(name)) name=generatedAssetName(existing, {type:asset.type,name:originalName});
+  const extension=String(asset.extension||extensionForType(asset.type,originalName)).toLowerCase();
+  const filename=String(asset.filename||`${name}.${extension}`);
+  return {
+    id:String(asset.id||uid('asset')),
+    name,
+    filename,
+    originalName,
+    type:String(asset.type||'application/octet-stream'),
+    kind,
+    purpose:String(asset.purpose||kind),
+    size:Number(asset.size||0),
+    data:String(asset.data||asset.url||''),
+    url:String(asset.url||''),
+    path:String(asset.path||`assets/${filename}`),
+    alt:String(asset.alt||''),
+    folder:String(asset.folder||kind),
+    tags:Array.isArray(asset.tags)?[...new Set(asset.tags.map(String))]:[],
+    width:Number(asset.width||0),
+    height:Number(asset.height||0),
+    createdAt:asset.createdAt||new Date().toISOString(),
+    updatedAt:asset.updatedAt||asset.createdAt||new Date().toISOString(),
+  };
+}
+function normalizeAssets(assets=[]){
+  const seen=new Set(); const source=Array.isArray(assets)?assets:[]; const out=[];
+  for(const raw of source){
+    const asset=normalizeAsset(raw, out);
+    if(seen.has(asset.id)) continue;
+    // Avoid accidental duplicate generated names while preserving legacy data.
+    if(out.some(x=>x.name===asset.name && x.id!==asset.id)) asset.name=generatedAssetName(out,{type:asset.type,name:asset.originalName});
+    asset.filename=`${asset.name}.${asset.extension||extensionForType(asset.type,asset.originalName)}`;
+    asset.path=`assets/${asset.filename}`;
+    seen.add(asset.id);out.push(asset);
+  }
+  return out;
+}
+function searchAssets(assets,query='',folder='',tag='',kind=''){
+  const q=String(query||'').trim().toLowerCase();
+  return normalizeAssets(assets).filter(asset=>{
+    const text=`${asset.name} ${asset.filename} ${asset.originalName} ${asset.alt} ${asset.tags.join(' ')} ${asset.folder}`.toLowerCase();
+    return (!q||text.includes(q))&&(!folder||asset.folder===folder)&&(!tag||asset.tags.includes(tag))&&(!kind||asset.kind===kind);
+  });
+}
+function addAsset(store,raw={}){
+  let asset;
+  store.transact('إضافة وسيط',project=>{
+    project.assets=normalizeAssets(project.assets);
+    asset=normalizeAsset({...raw,name:raw.name||generatedAssetName(project.assets,raw)},project.assets);
+    if(project.assets.some(x=>x.name===asset.name)) asset.name=generatedAssetName(project.assets,raw);
+    asset.filename=`${asset.name}.${extensionForType(asset.type,asset.originalName||asset.filename)}`;
+    asset.path=`assets/${asset.filename}`;
+    project.assets.push(deepClone(asset));
+  });
+  return asset;
+}
+function updateAsset(store,id,patch={}){
+  return store.transact('تعديل بيانات الوسيط',project=>{
+    const asset=(project.assets||[]).find(item=>item.id===id); if(!asset)return;
+    Object.assign(asset,deepClone(patch),{updatedAt:new Date().toISOString()});
+    if(patch.name){asset.name=String(patch.name).trim().replace(/\.[a-z0-9]{1,8}$/i,'')||asset.name;asset.filename=`${asset.name}.${extensionForType(asset.type,asset.originalName)}`;asset.path=`assets/${asset.filename}`;}
+  });
+}
+function removeAsset(store,id){return store.transact('حذف وسيط',project=>{project.assets=(project.assets||[]).filter(item=>item.id!==id);});}
+function findAsset(project,id){return normalizeAssets(project?.assets).find(asset=>asset.id===id)||null;}
+function assetForNodeType(type){
+  if(['image','gallery','avatar','logo','image-text','video-card'].includes(type))return 'image';
+  if(type==='video')return 'video';
+  if(type==='audio')return 'audio';
+  if(['file','download'].includes(type))return 'document';
+  return 'other';
+}
+exports.ASSET_KINDS = ASSET_KINDS;
+exports.extensionForType = extensionForType;
+exports.assetKind = assetKind;
+exports.prefixForAsset = prefixForAsset;
+exports.generatedAssetName = generatedAssetName;
+exports.normalizeAsset = normalizeAsset;
+exports.normalizeAssets = normalizeAssets;
+exports.searchAssets = searchAssets;
+exports.addAsset = addAsset;
+exports.updateAsset = updateAsset;
+exports.removeAsset = removeAsset;
+exports.findAsset = findAsset;
+exports.assetForNodeType = assetForNodeType;
+});
+__modules.set("src/core/cms.js",(exports,__require)=>{
+const {deepClone,uid,slugify} = __require("src/core/utils.js");
+const {makeCollection,makeCmsItem} = __require("src/core/site-schema.js");
+const CMS_FIELD_TYPES = [
+  ['text', 'نص'], ['textarea', 'نص طويل'], ['richtext', 'محتوى منسق'], ['number', 'رقم'], ['boolean', 'نعم/لا'],
+  ['image', 'صورة'], ['url', 'رابط'], ['email', 'بريد'], ['date', 'تاريخ'], ['slug', 'Slug'], ['select', 'اختيار'],
+];
+function addCollection(store, name, fields = []) {
+  let created = null;
+  store.transact('إنشاء مجموعة محتوى', project => {
+    project.cms ||= { collections: [] };
+    created = makeCollection(name, fields);
+    project.cms.collections.push(created);
+  });
+  return created;
+}
+function updateCollection(store, collectionId, patch = {}) {
+  return store.transact('تعديل مجموعة محتوى', project => {
+    const collection = project.cms?.collections?.find(item => item.id === collectionId);
+    if (!collection) return;
+    Object.assign(collection, deepClone(patch), { updatedAt: new Date().toISOString() });
+  });
+}
+function removeCollection(store, collectionId) {
+  return store.transact('حذف مجموعة محتوى', project => {
+    project.cms.collections = (project.cms.collections || []).filter(item => item.id !== collectionId);
+    walkPages(project.pages, node => { if (node.type === 'collection-list' && node.props?.collectionId === collectionId) { node.props.collectionId = ''; } });
+  });
+}
+function addItem(store, collectionId, data = {}) {
+  let item = null;
+  store.transact('إضافة محتوى', project => {
+    const collection = project.cms?.collections?.find(item => item.id === collectionId);
+    if (!collection) return;
+    item = makeCmsItem(collection, data);
+    collection.items.push(item);
+    collection.updatedAt = new Date().toISOString();
+  });
+  return item;
+}
+function updateItem(store, collectionId, itemId, data = {}) {
+  return store.transact('تعديل محتوى', project => {
+    const item = project.cms?.collections?.find(c => c.id === collectionId)?.items?.find(x => x.id === itemId);
+    if (!item) return;
+    item.data = { ...item.data, ...deepClone(data) };
+    if (data.slug) item.slug = slugify(data.slug);
+    item.updatedAt = new Date().toISOString();
+  });
+}
+function removeItem(store, collectionId, itemId) {
+  return store.transact('حذف محتوى', project => {
+    const collection = project.cms?.collections?.find(item => item.id === collectionId);
+    if (!collection) return;
+    collection.items = (collection.items || []).filter(item => item.id !== itemId);
+    collection.updatedAt = new Date().toISOString();
+  });
+}
+function getCollection(project, collectionId) { return project.cms?.collections?.find(item => item.id === collectionId) || null; }
+function getCollectionItems(project, collectionId) { return getCollection(project, collectionId)?.items || []; }
+
+function walkPages(pages, fn) {
+  for (const page of pages || []) walkNodes(page.nodes, fn);
+}
+function walkNodes(nodes, fn) {
+  for (const node of nodes || []) { fn(node); walkNodes(node.children, fn); }
+}
+exports.CMS_FIELD_TYPES = CMS_FIELD_TYPES;
+exports.addCollection = addCollection;
+exports.updateCollection = updateCollection;
+exports.removeCollection = removeCollection;
+exports.addItem = addItem;
+exports.updateItem = updateItem;
+exports.removeItem = removeItem;
+exports.getCollection = getCollection;
+exports.getCollectionItems = getCollectionItems;
+});
+__modules.set("src/core/color-mixer.js",(exports,__require)=>{
+const clamp=(n,min=0,max=1)=>Math.min(max,Math.max(min,n));
+function hexToRgb(input){
+  const v=String(input||'').trim().replace(/^#/,'');
+  const hex=v.length===3?v.split('').map(x=>x+x).join(''):v;
+  if(!/^[0-9a-f]{6}$/i.test(hex))return null;
+  return {r:parseInt(hex.slice(0,2),16),g:parseInt(hex.slice(2,4),16),b:parseInt(hex.slice(4,6),16)};
+}
+function rgbToHex({r,g,b}){return '#'+[r,g,b].map(v=>Math.round(clamp(Number(v),0,255)).toString(16).padStart(2,'0')).join('').toUpperCase()}
+function parseColor(input){
+  const text=String(input||'').trim();
+  if(/^#/.test(text))return hexToRgb(text);
+  const rgb=text.match(/^rgba?\(\s*([\d.]+)\s*[, ]\s*([\d.]+)\s*[, ]\s*([\d.]+)(?:\s*[,/]\s*[\d.]+\s*)?\)$/i);
+  if(rgb)return {r:Math.round(Number(rgb[1])),g:Math.round(Number(rgb[2])),b:Math.round(Number(rgb[3]))};
+  return null;
+}
+function rgbToHsl({r,g,b}){
+  r/=255;g/=255;b/=255;const max=Math.max(r,g,b),min=Math.min(r,g,b);let h=0,s=0;const l=(max+min)/2;
+  if(max!==min){const d=max-min;s=l>.5?d/(2-max-min):d/(max+min);switch(max){case r:h=(g-b)/d+(g<b?6:0);break;case g:h=(b-r)/d+2;break;default:h=(r-g)/d+4;}h/=6;}
+  return {h:h*360,s:s*100,l:l*100};
+}
+function hslToRgb({h,s,l}){
+  h=((h%360)+360)%360/360;s=clamp(s/100);l=clamp(l/100);if(s===0){const x=Math.round(l*255);return {r:x,g:x,b:x}}
+  const q=l<.5?l*(1+s):l+s-l*s,p=2*l-q;
+  const hue=t=>{if(t<0)t+=1;if(t>1)t-=1;if(t<1/6)return p+(q-p)*6*t;if(t<1/2)return q;if(t<2/3)return p+(q-p)*(2/3-t)*6;return p};
+  return {r:Math.round(hue(h+1/3)*255),g:Math.round(hue(h)*255),b:Math.round(hue(h-1/3)*255)};
+}
+function mixColors(a,b,ratio=.5,space='rgb'){
+  const ca=parseColor(a),cb=parseColor(b);if(!ca||!cb)return '';
+  const t=clamp(Number(ratio),0,1);
+  if(space==='hsl'){
+    const ah=rgbToHsl(ca),bh=rgbToHsl(cb);let dh=((bh.h-ah.h+540)%360)-180;const h=ah.h+dh*t;
+    return rgbToHex(hslToRgb({h,s:ah.s+(bh.s-ah.s)*t,l:ah.l+(bh.l-ah.l)*t}));
+  }
+  return rgbToHex({r:ca.r+(cb.r-ca.r)*t,g:ca.g+(cb.g-ca.g)*t,b:ca.b+(cb.b-ca.b)*t});
+}
+function gradientColors(stops=[],angle=90){
+  const clean=(Array.isArray(stops)?stops:[]).map((stop,i)=>({color:parseColor(stop.color)?rgbToHex(parseColor(stop.color)):String(stop.color||'#000000'),position:stop.position==null?Math.round((i/Math.max(1,stops.length-1))*100):Number(stop.position)})).slice(0,8);
+  if(clean.length<2)return clean[0]?.color||'#000000';
+  return `linear-gradient(${Number(angle)||90}deg, ${clean.map(s=>`${s.color} ${clamp(s.position,0,100)}%`).join(', ')})`;
+}
+function contrastLuminance(color){const c=parseColor(color);if(!c)return 0;const f=v=>{v/=255;return v<=0.03928?v/12.92:((v+0.055)/1.055)**2.4};return .2126*f(c.r)+.7152*f(c.g)+.0722*f(c.b)}
+function contrastRatio(a,b){const l1=contrastLuminance(a),l2=contrastLuminance(b);return (Math.max(l1,l2)+.05)/(Math.min(l1,l2)+.05)}
+function bestTextColor(background){return contrastRatio(background,'#000000')>=contrastRatio(background,'#FFFFFF')?'#000000':'#FFFFFF'}
+exports.hexToRgb = hexToRgb;
+exports.rgbToHex = rgbToHex;
+exports.parseColor = parseColor;
+exports.rgbToHsl = rgbToHsl;
+exports.hslToRgb = hslToRgb;
+exports.mixColors = mixColors;
+exports.gradientColors = gradientColors;
+exports.contrastLuminance = contrastLuminance;
+exports.contrastRatio = contrastRatio;
+exports.bestTextColor = bestTextColor;
+});
+__modules.set("src/core/commands.js",(exports,__require)=>{
+const {factory} = __require("src/catalog/components.js");
+const {uid,deepClone,slugify} = __require("src/core/utils.js");
+const {findNodeGlobal,walk} = __require("src/core/model.js");
+const {initializeDevicePresetsTree} = __require("src/core/device-presets.js");
+const containerTypes=new Set(['section','container','grid','columns','stack','hero','card','form','group']);
+function addNode(store,type,parentId=null,index=null){let created;store.transact('إضافة عنصر',p=>{created=factory(type);initializeDevicePresetsTree([created],store.ui?.device||'desktop');const page=p.pages.find(x=>x.id===p.activePageId);const parent=parentId?findNodeGlobal(p,parentId):null;if(parent){parent.node.children=parent.node.children||[];const i=index==null?parent.node.children.length:Math.max(0,Math.min(index,parent.node.children.length));parent.node.children.splice(i,0,created)}else if(page){const i=index==null?page.nodes.length:Math.max(0,Math.min(index,page.nodes.length));page.nodes.splice(i,0,created)}});store.setUI({selected:created?.id||null});return created}
+function removeNode(store,id){if(!findNodeGlobal(store.project,id))return false;store.transact('حذف عنصر',p=>{const h=findNodeGlobal(p,id);(h.parent?h.parent.children:h.page.nodes).splice(h.index,1);p.interactions=(p.interactions||[]).filter(i=>i.sourceId!==id&&i.options?.targetId!==id)});store.setUI({selected:null});return true}
+function remap(node){node.id=uid('node');node.children=(node.children||[]).map(child=>{const c=deepClone(child);return remap(c)});return node}
+function duplicateNode(store,id){const h=findNodeGlobal(store.project,id);if(!h)return null;let copy;store.transact('تكرار عنصر',p=>{const current=findNodeGlobal(p,id);copy=remap(deepClone(current.node));(current.parent?current.parent.children:current.page.nodes).splice(current.index+1,0,copy)});store.setUI({selected:copy.id});return copy}
+function moveNode(store,id,direction){const h=findNodeGlobal(store.project,id);if(!h)return false;let moved=false;store.transact(direction==='up'?'تحريك للأعلى':'تحريك للأسفل',p=>{const x=findNodeGlobal(p,id);const arr=x.parent?x.parent.children:x.page.nodes;const to=x.index+(direction==='up'?-1:1);if(to<0||to>=arr.length)return;[arr[x.index],arr[to]]=[arr[to],arr[x.index]];moved=true});return moved}
+function updateProps(store,id,patch){store.transact('تعديل المحتوى',p=>{const h=findNodeGlobal(p,id);if(h)h.node.props={...(h.node.props||{}),...patch}})}
+function updateStyle(store,id,patch,device='desktop'){store.transact('تعديل المظهر',p=>{const h=findNodeGlobal(p,id);if(!h)return;if(device==='desktop'){const desktop=h.node.responsive?.desktop||{},basePatch={},responsivePatch={};for(const [key,value] of Object.entries(patch)){if(Object.prototype.hasOwnProperty.call(desktop,key))responsivePatch[key]=value;else basePatch[key]=value}h.node.style={...(h.node.style||{}),...basePatch};if(Object.keys(responsivePatch).length)h.node.responsive={...(h.node.responsive||{}),desktop:{...desktop,...responsivePatch}}}else h.node.responsive={...(h.node.responsive||{}),[device]:{...(h.node.responsive?.[device]||{}),...patch}}})}
+function insertNodeAtDrop(store,type,targetId=null){let created;store.transact('إدراج عنصر',p=>{created=factory(type);initializeDevicePresetsTree([created],store.ui?.device||'desktop');const target=targetId?findNodeGlobal(p,targetId):null;const page=p.pages.find(x=>x.id===p.activePageId);if(target&&containerTypes.has(target.node.type)){target.node.children=target.node.children||[];target.node.children.push(created)}else if(target){const arr=target.parent?target.parent.children:target.page.nodes;arr.splice(target.index+1,0,created)}else if(page)page.nodes.push(created)});store.setUI({selected:created?.id||null});return created}
+function setPageName(store,id,name){store.transact('إعادة تسمية الصفحة',p=>{const pg=p.pages.find(x=>x.id===id);if(pg){pg.name=String(name||'').trim()||pg.name;pg.slug=slugify(pg.name);pg.path=`/${pg.slug}`;pg.seo={...(pg.seo||{}),title:pg.name}}})}
+exports.addNode = addNode;
+exports.removeNode = removeNode;
+exports.duplicateNode = duplicateNode;
+exports.moveNode = moveNode;
+exports.updateProps = updateProps;
+exports.updateStyle = updateStyle;
+exports.insertNodeAtDrop = insertNodeAtDrop;
+exports.setPageName = setPageName;
+});
+__modules.set("src/core/design-system.js",(exports,__require)=>{
+const {deepClone} = __require("src/core/utils.js");
+const {DEFAULT_THEME} = __require("src/core/model.js");
+const tokenPaths={
+  primary:'colors.primary',secondary:'colors.secondary',accent:'colors.accent',surface:'colors.surface',soft:'colors.soft',text:'colors.text',muted:'colors.muted',line:'colors.line',
+  space1:'spacing.xs',space2:'spacing.sm',space3:'spacing.md',space4:'spacing.lg',space5:'spacing.xl',space6:'spacing.xxl',
+  radiusSm:'radii.sm',radiusMd:'radii.md',radiusLg:'radii.lg',radiusPill:'radii.pill',
+  shadowSoft:'shadows.soft',shadowMedium:'shadows.medium',container:'container',
+  h1Size:'typography.h1.size',h2Size:'typography.h2.size',bodySize:'typography.body.size',motionFast:'motion.fast',motionNormal:'motion.normal',motionSlow:'motion.slow'
+};
+function getToken(theme, name, fallback='') {
+  const path=tokenPaths[name]||name;
+  let current=theme?.tokens;
+  for(const part of String(path).split('.')) current=current?.[part];
+  return current ?? fallback;
+}
+function token(name){return `var(--b-${String(name).replace(/[^a-zA-Z0-9_-]/g,'-')})`}
+function themeVars(theme={}) {
+  const merged={...deepClone(DEFAULT_THEME),...deepClone(theme),tokens:{...deepClone(DEFAULT_THEME.tokens),...(theme.tokens||{})}};
+  const vars={};
+  Object.keys(tokenPaths).forEach(name=>{const value=getToken(merged,name,'');if(value!==''&&value!=null)vars[`--b-${name}`]=value});
+  vars['--b-font-family']=merged.font||'system-ui';
+  vars['--b-primary']=getToken(merged,'primary',merged.primary);
+  vars['--b-text']=getToken(merged,'text',merged.text);
+  vars['--b-muted']=getToken(merged,'muted',merged.muted);
+  vars['--b-line']=getToken(merged,'line','#e6e8ef');
+  return vars;
+}
+function themeCss(theme={}) {
+  return Object.entries(themeVars(theme)).map(([key,value])=>`${key}:${value};`).join('');
+}
+function applyThemeVars(element,theme){if(!element)return;Object.entries(themeVars(theme)).forEach(([key,value])=>element.style.setProperty(key,value));}
+function themeSnapshot(theme){return deepClone({...DEFAULT_THEME,...theme,tokens:{...DEFAULT_THEME.tokens,...(theme?.tokens||{})}})}
+exports.tokenPaths = tokenPaths;
+exports.getToken = getToken;
+exports.token = token;
+exports.themeVars = themeVars;
+exports.themeCss = themeCss;
+exports.applyThemeVars = applyThemeVars;
+exports.themeSnapshot = themeSnapshot;
+});
+__modules.set("src/core/device-presets.js",(exports,__require)=>{
+const {deepClone} = __require("src/core/utils.js");
+const DEVICE_ORDER = ['desktop','tablet','mobile'];
+
+const common = {
+  desktop: { maxWidth:'100%', minWidth:0, boxSizing:'border-box' },
+  tablet: { maxWidth:'100%', minWidth:0, boxSizing:'border-box' },
+  mobile: { maxWidth:'100%', minWidth:0, boxSizing:'border-box' },
+};
+
+const PRESETS = {
+  desktop: {
+    heading:{fontSize:42,lineHeight:1.15}, text:{fontSize:16,lineHeight:1.8}, button:{fontSize:13,paddingY:11,paddingX:20}, link:{fontSize:13},
+    section:{paddingY:40,paddingX:24}, container:{paddingX:24}, hero:{paddingY:58,paddingX:28}, card:{padding:20},
+    grid:{gap:16,gridTemplateColumns:'repeat(3,minmax(0,1fr))'}, columns:{gap:18,gridTemplateColumns:'repeat(2,minmax(0,1fr))'},
+    stack:{gap:12}, spaced:{gap:12}, image:{height:300}, gallery:{gap:10,gridTemplateColumns:'repeat(3,minmax(0,1fr))'}, video:{height:260},
+    input:{width:'100%',maxWidth:'100%'}, textarea:{width:'100%',maxWidth:'100%'}, select:{width:'100%',maxWidth:'100%'},
+    form:{padding:20}, stats:{gap:12}, pricing:{gap:12}, timeline:{gap:12}, featureGrid:{gap:12},
+  },
+  tablet: {
+    heading:{fontSize:34,lineHeight:1.16}, text:{fontSize:15,lineHeight:1.75}, button:{fontSize:12,paddingY:10,paddingX:18}, link:{fontSize:12},
+    section:{paddingY:32,paddingX:20}, container:{paddingX:20}, hero:{paddingY:42,paddingX:24}, card:{padding:17},
+    grid:{gap:14,gridTemplateColumns:'repeat(2,minmax(0,1fr))'}, columns:{gap:16,gridTemplateColumns:'repeat(2,minmax(0,1fr))'},
+    stack:{gap:10}, spaced:{gap:10}, image:{height:260}, gallery:{gap:8,gridTemplateColumns:'repeat(2,minmax(0,1fr))'}, video:{height:220},
+    input:{width:'100%',maxWidth:'100%'}, textarea:{width:'100%',maxWidth:'100%'}, select:{width:'100%',maxWidth:'100%'},
+    form:{padding:18}, stats:{gap:10}, pricing:{gap:10}, timeline:{gap:10}, featureGrid:{gap:10},
+  },
+  mobile: {
+    heading:{fontSize:28,lineHeight:1.18}, text:{fontSize:14,lineHeight:1.75}, button:{fontSize:12,paddingY:10,paddingX:16}, link:{fontSize:12},
+    section:{paddingY:24,paddingX:16}, container:{paddingX:16}, hero:{paddingY:30,paddingX:18}, card:{padding:15},
+    grid:{gap:10,gridTemplateColumns:'1fr'}, columns:{gap:12,gridTemplateColumns:'1fr'},
+    stack:{gap:9}, spaced:{gap:10}, image:{height:220}, gallery:{gap:7,gridTemplateColumns:'1fr'}, video:{height:200},
+    input:{width:'100%',maxWidth:'100%'}, textarea:{width:'100%',maxWidth:'100%'}, select:{width:'100%',maxWidth:'100%'},
+    form:{padding:15}, stats:{gap:9,gridTemplateColumns:'1fr'}, pricing:{gap:9,gridTemplateColumns:'1fr'}, timeline:{gap:9,gridTemplateColumns:'1fr'}, featureGrid:{gap:9,gridTemplateColumns:'1fr'},
+  }
+};
+
+const TYPE_ALIASES = {
+  featuregrid:'featureGrid', 'feature-grid':'featureGrid', 'feature-comparison':'featureGrid',
+};
+function getDevicePreset(type, device='desktop') {
+  const d = PRESETS[device] || PRESETS.desktop;
+  const key = TYPE_ALIASES[type] || type;
+  return { ...(common[device] || common.desktop), ...(d[key] || {}) };
+}
+function applyDevicePreset(node, device='desktop', {onlyMissing=true}={}) {
+  if (!node || !DEVICE_ORDER.includes(device)) return node;
+  node.responsive = node.responsive || {};
+  const preset = getDevicePreset(node.type, device);
+  const existing = node.responsive[device] || {};
+  node.responsive[device] = onlyMissing ? { ...preset, ...existing } : { ...existing, ...preset };
+  node.device = node.device || {};
+  node.device.created = node.device.created || device;
+  node.device.touched = Array.from(new Set([...(node.device.touched || []), device]));
+  return node;
+}
+function applyDevicePresetTree(nodes=[], device='desktop', options={}) {
+  const cloned = Array.isArray(nodes) ? nodes : [];
+  const visit = node => {
+    applyDevicePreset(node, device, options);
+    (node.children || []).forEach(visit);
+    return node;
+  };
+  cloned.forEach(visit);
+  return cloned;
+}
+function initializeDevicePresetsTree(nodes=[], createdDevice='desktop') {
+  const list = Array.isArray(nodes) ? nodes : [];
+  const visit = node => {
+    if (!node) return node;
+    for (const device of DEVICE_ORDER) applyDevicePreset(node, device, {onlyMissing:true});
+    node.device = node.device || {};
+    node.device.created = DEVICE_ORDER.includes(createdDevice) ? createdDevice : 'desktop';
+    node.device.touched = [node.device.created];
+    (node.children || []).forEach(visit);
+    return node;
+  };
+  list.forEach(visit);
+  return list;
+}
+function deviceLabel(device) {
+  return ({desktop:'سطح المكتب',tablet:'الجهاز اللوحي',mobile:'الهاتف'})[device] || device;
+}
+exports.DEVICE_ORDER = DEVICE_ORDER;
+exports.getDevicePreset = getDevicePreset;
+exports.applyDevicePreset = applyDevicePreset;
+exports.applyDevicePresetTree = applyDevicePresetTree;
+exports.initializeDevicePresetsTree = initializeDevicePresetsTree;
+exports.deviceLabel = deviceLabel;
+});
+__modules.set("src/core/migrations.js",(exports,__require)=>{
+const {deepClone} = __require("src/core/utils.js");
+const {SCHEMA_VERSION,normalizeProject} = __require("src/core/model.js");
+const {DEFAULT_CMS,DEFAULT_GLOBALS,DEFAULT_NAVIGATION,DEFAULT_SITE,DEFAULT_SYMBOLS,DEFAULT_STYLE_LIBRARY,normalizeCms,normalizeGlobals,normalizeNavigation,normalizeSite,normalizeSymbols,normalizeStyleLibrary} = __require("src/core/site-schema.js");
+const CURRENT_SCHEMA = 26;
+function migrateProject(input) {
+  const source = deepClone(input || {});
+  const version = Number(source.version || 0);
+  const next = {
+    ...source,
+    version: CURRENT_SCHEMA,
+    site: normalizeSite({ ...DEFAULT_SITE, ...(source.site || {}) }),
+    navigation: normalizeNavigation({ ...DEFAULT_NAVIGATION, ...(source.navigation || {}) }),
+    cms: normalizeCms({ ...DEFAULT_CMS, ...(source.cms || {}) }),
+    symbols: normalizeSymbols({ ...DEFAULT_SYMBOLS, ...(source.symbols || {}) }),
+    globals: normalizeGlobals({ ...DEFAULT_GLOBALS, ...(source.globals || {}) }),
+    styleLibrary: normalizeStyleLibrary({ ...DEFAULT_STYLE_LIBRARY, ...(source.styleLibrary || {}) }),
+    release: {
+      channel: 'draft',
+      status: 'draft',
+      version: 1,
+      publishedAt: null,
+      ...(source.release || {}),
+    },
+    seo: {
+      enabled: true,
+      canonicalMode: 'auto',
+      ...(source.seo || {}),
+    },
+  };
+
+  if (!next.navigation.menus.some(menu => menu.id === next.navigation.headerMenuId)) next.navigation.headerMenuId = next.navigation.menus[0]?.id || null;
+  if (!next.navigation.menus.some(menu => menu.id === next.navigation.footerMenuId)) next.navigation.footerMenuId = next.navigation.menus[0]?.id || null;
+
+  // V11–V15 stored site title only in meta. Keep it as the first source for the new site object.
+  if (version < 16) {
+    next.site.title = next.site.title === DEFAULT_SITE.title ? String(next.meta?.name || DEFAULT_SITE.title) : next.site.title;
+    next.site.description = next.site.description === DEFAULT_SITE.description ? String(next.meta?.description || DEFAULT_SITE.description) : next.site.description;
+  }
+
+  next.theme ||= {};
+  next.theme.tokens ||= {};
+  next.theme.tokens.typography ||= {};
+  next.theme.tokens.motion ||= { fast: 180, normal: 360, slow: 720 };
+  const normalized = normalizeProject(next);
+  normalized.version = SCHEMA_VERSION;
+  normalized.site = normalizeSite(normalized.site);
+  normalized.navigation = normalizeNavigation(normalized.navigation);
+  normalized.cms = normalizeCms(normalized.cms);
+  normalized.symbols = normalizeSymbols(normalized.symbols);
+  normalized.globals = normalizeGlobals(normalized.globals);
+  normalized.styleLibrary = normalizeStyleLibrary(normalized.styleLibrary);
+  normalized.release = { channel: 'draft', status: 'draft', version: 1, publishedAt: null, ...(normalized.release || {}) };
+  normalized.seo = { enabled: true, canonicalMode: 'auto', ...(normalized.seo || {}) };
+  return normalized;
+}
+exports.CURRENT_SCHEMA = CURRENT_SCHEMA;
+exports.migrateProject = migrateProject;
+});
+__modules.set("src/core/model.js",(exports,__require)=>{
+const {uid,slugify,deepClone} = __require("src/core/utils.js");
+const {normalizeVariables} = __require("src/core/variables.js");
+const {normalizeAssets} = __require("src/core/assets.js");
+const {normalizeInteraction} = __require("src/engine/interaction.js");
+const {ensurePageMenu} = __require("src/core/navigation.js");
+const SCHEMA_VERSION=26;
+const DEFAULT_THEME={
+  primary:'#5b5ce2',secondary:'#20a06a',accent:'#f4a340',surface:'#fff',soft:'#f6f7fb',text:'#171b2a',muted:'#6f778b',radius:14,font:'system-ui',
+  tokens:{
+    container:1180,
+    colors:{primary:'#5b5ce2',secondary:'#20a06a',accent:'#f4a340',surface:'#fff',soft:'#f6f7fb',text:'#171b2a',muted:'#6f778b',line:'#e6e8ef'},
+    spacing:{xs:4,sm:8,md:12,lg:18,xl:28,xxl:44},
+    radii:{sm:8,md:12,lg:16,pill:999},
+    shadows:{soft:'0 12px 30px rgba(25,30,55,.08)',medium:'0 20px 50px rgba(25,30,55,.12)'},
+    typography:{h1:{size:52,lineHeight:1.08,weight:800},h2:{size:36,lineHeight:1.15,weight:800},h3:{size:26,lineHeight:1.2,weight:750},body:{size:16,lineHeight:1.65,weight:400},small:{size:13,lineHeight:1.5,weight:500}},
+    motion:{fast:180,normal:360,slow:720}
+  }
+};
+const DEFAULT_DEVICES={desktop:{width:1180},tablet:{width:768},mobile:{width:390}};
+const DEFAULT_SETTINGS={advancedDevices:false,propagateDevices:false,snapToGrid:true,gridSize:8,autoSave:true,autoSaveMs:500};
+const obj=value=>value&&typeof value==='object'&&!Array.isArray(value);
+function makeNode(type,props={},style={},children=[]){return {id:uid('node'),type,props:{...props},style:{marginTop:0,marginBottom:14,...style},responsive:{},classes:[],attrs:{},semantic:{tag:'div',role:'',ariaLabel:''},layout:{display:'block',direction:'column',gap:0,align:'stretch',justify:'start',wrap:false},visibility:{desktop:true,tablet:true,mobile:true},device:{created:null,touched:[]},locked:false,children:Array.isArray(children)?[...children]:[]}}
+function makePage(name='الرئيسية',nodes=[],slug){const pageName=String(name||'الرئيسية').trim()||'الرئيسية';return {id:uid('page'),name:pageName,slug:slug||slugify(pageName),path:`/${slug||slugify(pageName)}`.replace('//','/'),seo:{title:pageName,description:'',image:'',canonical:'',noIndex:false},settings:{showInNav:true,hidden:false,template:false},status:'draft',dataBindings:[],nodes:Array.isArray(nodes)?nodes:[]}}
+function makeProject(seed={}){const home=makePage('الرئيسية',seed.nodes||[],'home');const now=new Date().toISOString();const baseTheme=deepClone(DEFAULT_THEME);if(obj(seed.theme))Object.assign(baseTheme,deepClone(seed.theme));return {version:SCHEMA_VERSION,meta:{id:typeof seed.id==='string'?seed.id:uid('project'),name:String(seed.name||'مشروعي'),ownerId:typeof seed.ownerId==='string'?seed.ownerId:null,createdAt:now,updatedAt:now,template:seed.template||'',description:String(seed.description||'')},site:{title:String(seed.site?.title||seed.name||'موقع جديد'),description:String(seed.site?.description||'موقع تم بناؤه باستخدام بَنّاء.'),language:'ar',direction:'rtl',locale:'ar-OM',baseUrl:'',favicon:'',socialImage:'',author:'',brand:{name:'بَنّاء',logo:'',mark:'ب'},analytics:{provider:'none',measurementId:''},indexing:{robots:'index,follow',sitemap:true},links:{email:'',phone:'',whatsapp:''},...(obj(seed.site)?deepClone(seed.site):{})},theme:baseTheme,devices:{...DEFAULT_DEVICES,...(obj(seed.devices)?deepClone(seed.devices):{})},pages:[home],assets:Array.isArray(seed.assets)?deepClone(seed.assets):[],variables:obj(seed.variables)?deepClone(seed.variables):{},interactions:Array.isArray(seed.interactions)?deepClone(seed.interactions):[],navigation:{menus:[{id:'main',name:'الرئيسية',items:[]},{id:'footer',name:'التذييل',items:[]}],headerMenuId:'main',footerMenuId:'footer'},cms:{collections:[]},symbols:{definitions:[]},globals:{header:null,footer:null},styleLibrary:{classes:{},textStyles:{},effects:{}},release:{channel:'draft',status:'draft',version:1,publishedAt:null},seo:{enabled:true,canonicalMode:'auto'},settings:{...DEFAULT_SETTINGS,...(obj(seed.settings)?deepClone(seed.settings):{})},activePageId:home.id,activeNodeId:null}
+}
+function normalizeNode(raw,ids){const input=obj(raw)?raw:{};const id=typeof input.id==='string'&&!ids.has(input.id)?input.id:uid('node');ids.add(id);return {...input,id,type:typeof input.type==='string'&&input.type?input.type:'container',props:obj(input.props)?deepClone(input.props):{},style:{marginTop:0,marginBottom:14,...(obj(input.style)?input.style:{})},responsive:obj(input.responsive)?deepClone(input.responsive):{},classes:Array.isArray(input.classes)?[...new Set(input.classes.map(String))]:[],attrs:obj(input.attrs)?deepClone(input.attrs):{},semantic:{tag:'div',role:'',ariaLabel:'',...(obj(input.semantic)?deepClone(input.semantic):{})},layout:{display:'block',direction:'column',gap:0,align:'stretch',justify:'start',wrap:false,...(obj(input.layout)?deepClone(input.layout):{})},visibility:{desktop:true,tablet:true,mobile:true,...(obj(input.visibility)?deepClone(input.visibility):{})},device:{created:input.device?.created||null,touched:Array.isArray(input.device?.touched)?[...new Set(input.device.touched.map(String))]:[]},locked:Boolean(input.locked),children:(Array.isArray(input.children)?input.children:[]).map(child=>normalizeNode(child,ids))}}
+function uniqueSlug(value,used){const base=slugify(value);let candidate=base,index=2;while(used.has(candidate))candidate=`${base}-${index++}`;used.add(candidate);return candidate}
+function uniquePath(value,fallbackSlug,used){let base=String(value||`/${fallbackSlug}`).trim().replace(/\s+/g,'-').replace(/\/{2,}/g,'/');if(!base.startsWith('/'))base='/'+base;if(base.length>1)base=base.replace(/\/$/,'');if(!base||base==='/')base='/';let candidate=base,index=2;while(used.has(candidate)){candidate=base==='/'?`/home-${index++}`:`${base}-${index++}`}used.add(candidate);return candidate}
+function walkPages(pages,fn){for(const page of pages){walk(page.nodes,fn)}}
+function normalizeNavbarLinks(page,allPages){walk(page.nodes,node=>{if(node.type!=='navbar')return;const labels=Array.isArray(node.props?.links)?node.props.links:[];const targets=Array.isArray(node.props?.linkTargets)?node.props.linkTargets:[];node.props.links=labels.map(x=>String(x));node.props.linkTargets=labels.map((label,index)=>{const explicit=targets[index];if(typeof explicit==='string'&&allPages.some(p=>p.id===explicit))return explicit;return allPages.find(p=>p.name===label)?.id||((index<allPages.length)?allPages[index].id:allPages[0]?.id||null)})})}
+function mergeTheme(source){const theme=deepClone(DEFAULT_THEME);if(obj(source))Object.assign(theme,source);theme.tokens={...deepClone(DEFAULT_THEME.tokens),...(obj(source?.tokens)?source.tokens:{})};theme.tokens.colors={...DEFAULT_THEME.tokens.colors,...(obj(source?.tokens?.colors)?source.tokens.colors:{})};theme.tokens.spacing={...DEFAULT_THEME.tokens.spacing,...(obj(source?.tokens?.spacing)?source.tokens.spacing:{})};theme.tokens.radii={...DEFAULT_THEME.tokens.radii,...(obj(source?.tokens?.radii)?source.tokens.radii:{})};theme.tokens.shadows={...DEFAULT_THEME.tokens.shadows,...(obj(source?.tokens?.shadows)?source.tokens.shadows:{})};theme.tokens.typography={...deepClone(DEFAULT_THEME.tokens.typography),...(obj(source?.tokens?.typography)?source.tokens.typography:{})};for(const key of Object.keys(DEFAULT_THEME.tokens.typography))theme.tokens.typography[key]={...DEFAULT_THEME.tokens.typography[key],...(obj(source?.tokens?.typography?.[key])?source.tokens.typography[key]:{})};theme.tokens.motion={...DEFAULT_THEME.tokens.motion,...(obj(source?.tokens?.motion)?source.tokens.motion:{})};return theme}
+function normalizeProject(project){
+  const source=obj(project)?project:makeProject();const now=new Date().toISOString();const normalized=deepClone(source);normalized.version=SCHEMA_VERSION;
+  normalized.meta=obj(normalized.meta)?normalized.meta:{};normalized.meta.id=typeof normalized.meta.id==='string'&&normalized.meta.id?normalized.meta.id:uid('project');normalized.meta.name=String(normalized.meta.name||'مشروعي').trim()||'مشروعي';normalized.meta.ownerId=typeof normalized.meta.ownerId==='string'&&normalized.meta.ownerId?normalized.meta.ownerId:null;normalized.meta.createdAt=normalized.meta.createdAt||now;normalized.meta.updatedAt=now;
+  normalized.theme=mergeTheme(normalized.theme);normalized.devices={...DEFAULT_DEVICES,...(obj(normalized.devices)?normalized.devices:{})};normalized.settings={...DEFAULT_SETTINGS,...(obj(normalized.settings)?normalized.settings:{})};normalized.assets=normalizeAssets(normalized.assets);normalized.variables=normalizeVariables(normalized.variables);normalized.site={title:String(normalized.site?.title||normalized.meta.name||'موقع جديد'),description:String(normalized.site?.description||'موقع تم بناؤه باستخدام بَنّاء.'),language:'ar',direction:'rtl',locale:'ar-OM',baseUrl:'',favicon:'',socialImage:'',author:'',brand:{name:'بَنّاء',logo:'',mark:'ب'},analytics:{provider:'none',measurementId:''},indexing:{robots:'index,follow',sitemap:true},links:{email:'',phone:'',whatsapp:''},...(obj(normalized.site)?normalized.site:{})};normalized.navigation={menus:[{id:'main',name:'الرئيسية',items:[]},{id:'footer',name:'التذييل',items:[]}],headerMenuId:'main',footerMenuId:'footer',...(obj(normalized.navigation)?normalized.navigation:{})};normalized.navigation.menus=(Array.isArray(normalized.navigation.menus)?normalized.navigation.menus:[]).map(menu=>({id:String(menu?.id||uid('menu')),name:String(menu?.name||'قائمة'),items:Array.isArray(menu?.items)?menu.items:[]}));normalized.cms={collections:Array.isArray(normalized.cms?.collections)?normalized.cms.collections:[]};normalized.symbols={definitions:Array.isArray(normalized.symbols?.definitions)?normalized.symbols.definitions:[]};normalized.globals={header:null,footer:null,...(obj(normalized.globals)?normalized.globals:{})};normalized.styleLibrary={classes:{},textStyles:{},effects:{},components:{},states:{},...(obj(normalized.styleLibrary)?normalized.styleLibrary:{})};normalized.release={channel:'draft',status:'draft',version:1,publishedAt:null,...(obj(normalized.release)?normalized.release:{})};normalized.seo={enabled:true,canonicalMode:'auto',...(obj(normalized.seo)?normalized.seo:{})};
+  normalized.pages=Array.isArray(normalized.pages)&&normalized.pages.length?normalized.pages:[makePage()];const pageIds=new Set(),nodeIds=new Set(),slugs=new Set(),paths=new Set();normalized.pages=normalized.pages.map((raw,index)=>{const page=obj(raw)?raw:{};const name=String(page.name||`صفحة ${index+1}`).trim()||`صفحة ${index+1}`;const id=typeof page.id==='string'&&!pageIds.has(page.id)?page.id:uid('page');pageIds.add(id);const slug=uniqueSlug(page.slug||name,slugs);const pathValue=uniquePath(page.path||`/${slug}`,slug,paths);return {...page,id,name,slug,path:pathValue,type:page.type==='template'?'template':'page',parentId:typeof page.parentId==='string'?page.parentId:null,status:['draft','published','archived'].includes(page.status)?page.status:'draft',dataBindings:Array.isArray(page.dataBindings)?deepClone(page.dataBindings):[],seo:{title:name,description:'',image:'',canonical:'',noIndex:false,...(obj(page.seo)?deepClone(page.seo):{})},settings:{showInNav:true,hidden:false,template:false,...(obj(page.settings)?deepClone(page.settings):{})},nodes:(Array.isArray(page.nodes)?page.nodes:[]).map(node=>normalizeNode(node,nodeIds))}});for(const page of normalized.pages)if(page.parentId===page.id||!pageIds.has(page.parentId))page.parentId=null;normalized.activePageId=normalized.pages.some(page=>page.id===normalized.activePageId)?normalized.activePageId:normalized.pages[0].id;for(const page of normalized.pages)normalizeNavbarLinks(page,normalized.pages);
+  const validNodeIds=new Set();const validPageIds=new Set(normalized.pages.map(page=>page.id));walkPages(normalized.pages,node=>validNodeIds.add(node.id));normalized.interactions=(Array.isArray(normalized.interactions)?normalized.interactions:[]).map(normalizeInteraction).filter(Boolean).filter(item=>validNodeIds.has(item.sourceId)).filter(item=>!item.options?.targetId||validNodeIds.has(item.options.targetId)).filter(item=>item.action!=='page'||!item.options?.pageId||validPageIds.has(item.options.pageId));
+  const mainMenu=normalized.navigation.menus.find(menu=>menu.id===normalized.navigation.headerMenuId)||normalized.navigation.menus[0];if(mainMenu)ensurePageMenu(normalized,mainMenu.id);normalized.activeNodeId=validNodeIds.has(normalized.activeNodeId)?normalized.activeNodeId:null;return normalized
+}
+function walk(nodes,fn,parent=null){for(let index=0;index<(nodes||[]).length;index++){const current=nodes[index];fn(current,parent,index,nodes);if(current?.children?.length)walk(current.children,fn,current)}}
+function findInPage(page,id){let hit=null;walk(page.nodes,(node,parent,index,nodes)=>{if(node.id===id)hit={node,parent,index,nodes,page}});return hit}
+function findNode(project,id){const page=(project.pages||[]).find(item=>item.id===project.activePageId);return page?findInPage(page,id):null}
+function findNodeGlobal(project,id){if(!id)return null;for(const page of project.pages||[]){const hit=findInPage(page,id);if(hit)return hit}return null}
+function countNodes(project){let count=0;for(const page of project.pages||[])walk(page.nodes,()=>count++);return count}
+function collectIds(project){const ids=new Set();for(const page of project.pages||[]){ids.add(page.id);walk(page.nodes,node=>ids.add(node.id))}return ids}
+function nextPageName(project){let index=1;while(project.pages.some(page=>page.name===`صفحة ${index}`))index++;return `صفحة ${index}`}
+exports.SCHEMA_VERSION = SCHEMA_VERSION;
+exports.DEFAULT_THEME = DEFAULT_THEME;
+exports.DEFAULT_DEVICES = DEFAULT_DEVICES;
+exports.DEFAULT_SETTINGS = DEFAULT_SETTINGS;
+exports.makeNode = makeNode;
+exports.makePage = makePage;
+exports.makeProject = makeProject;
+exports.normalizeProject = normalizeProject;
+exports.walk = walk;
+exports.findNode = findNode;
+exports.findNodeGlobal = findNodeGlobal;
+exports.countNodes = countNodes;
+exports.collectIds = collectIds;
+exports.nextPageName = nextPageName;
+});
+__modules.set("src/core/navigation.js",(exports,__require)=>{
+const {deepClone,uid} = __require("src/core/utils.js");
+const MENU_TYPES = Object.freeze({ PAGE: 'page', URL: 'url', ANCHOR: 'anchor' });
+function visiblePages(project) {
+  return (project?.pages || []).filter(page => page?.settings?.hidden !== true && page?.status !== 'archived');
+}
+function ensurePageMenu(project, menuId = project?.navigation?.headerMenuId || 'main') {
+  project.navigation ||= {};
+  project.navigation.menus ||= [];
+  let menu = project.navigation.menus.find(item => item.id === menuId);
+  if (!menu) {
+    menu = { id: menuId, name: menuId === 'main' ? 'الرئيسية' : 'قائمة جديدة', items: [] };
+    project.navigation.menus.push(menu);
+  }
+  menu.items = Array.isArray(menu.items) ? menu.items : [];
+  const pages = visiblePages(project);
+  const pageIds = new Set(pages.map(page => page.id));
+  const existingPageIds = new Set(menu.items.filter(item => item.type === MENU_TYPES.PAGE).map(item => item.targetId));
+  for (const page of pages) {
+    if (existingPageIds.has(page.id)) continue;
+    menu.items.push({ id: uid('nav'), label: page.name, type: MENU_TYPES.PAGE, targetId: page.id, url: '', newTab: false, children: [] });
+  }
+  menu.items = menu.items.filter(item => item.type !== MENU_TYPES.PAGE || pageIds.has(item.targetId));
+  return menu;
+}
+function addMenuItem(store, menuId, item = {}) {
+  return store.transact('إضافة عنصر للقائمة', project => {
+    const menu = ensurePageMenu(project, menuId);
+    menu.items.push({ id: uid('nav'), label: String(item.label || 'رابط'), type: item.type === MENU_TYPES.URL ? MENU_TYPES.URL : MENU_TYPES.PAGE, targetId: item.targetId || null, url: String(item.url || ''), newTab: Boolean(item.newTab), children: [] });
+  });
+}
+function updateMenuItem(store, menuId, itemId, patch = {}) {
+  return store.transact('تعديل عنصر القائمة', project => {
+    const menu = project.navigation?.menus?.find(item => item.id === menuId);
+    const item = menu?.items?.find(entry => entry.id === itemId);
+    if (!item) return;
+    Object.assign(item, deepClone(patch));
+  });
+}
+function removeMenuItem(store, menuId, itemId) {
+  return store.transact('حذف عنصر القائمة', project => {
+    const menu = project.navigation?.menus?.find(item => item.id === menuId);
+    if (!menu) return;
+    menu.items = menu.items.filter(item => item.id !== itemId);
+  });
+}
+function reorderMenuItem(store, menuId, itemId, direction) {
+  return store.transact(direction === 'up' ? 'رفع عنصر القائمة' : 'خفض عنصر القائمة', project => {
+    const menu = project.navigation?.menus?.find(item => item.id === menuId);
+    if (!menu) return;
+    const index = menu.items.findIndex(item => item.id === itemId);
+    const next = index + (direction === 'up' ? -1 : 1);
+    if (index < 0 || next < 0 || next >= menu.items.length) return;
+    [menu.items[index], menu.items[next]] = [menu.items[next], menu.items[index]];
+  });
+}
+function syncAllPageMenus(store) {
+  return store.transact('مزامنة قوائم الموقع', project => {
+    for (const menu of project.navigation?.menus || []) {
+      const isHeader = menu.id === project.navigation?.headerMenuId;
+      if (isHeader) ensurePageMenu(project, menu.id);
+    }
+  });
+}
+exports.MENU_TYPES = MENU_TYPES;
+exports.visiblePages = visiblePages;
+exports.ensurePageMenu = ensurePageMenu;
+exports.addMenuItem = addMenuItem;
+exports.updateMenuItem = updateMenuItem;
+exports.removeMenuItem = removeMenuItem;
+exports.reorderMenuItem = reorderMenuItem;
+exports.syncAllPageMenus = syncAllPageMenus;
+});
+__modules.set("src/core/project-repository.js",(exports,__require)=>{
+const {storage} = __require("src/core/storage.js");
+const {makeProject} = __require("src/core/model.js");
+const {migrateProject} = __require("src/core/migrations.js");
+const {deepClone,uid} = __require("src/core/utils.js");
+const REPOSITORY_VERSION = 2;
+const PROJECT_INDEX_PREFIX = 'bunaa_v26_project_index:';
+const PROJECT_DATA_PREFIX = 'bunaa_v26_project:';
+const LEGACY_PROJECT_PREFIXES = [
+  'bunaa_v25_project:',
+  'bunaa_v21_project:',
+  'bunaa_v20_project:',
+  'bunaa_v19_project:',
+  'bunaa_v11_improved_project:',
+  'bunaa_v12_project:',
+  'bunaa_v13_project:',
+  'bunaa_v14_project:',
+  'bunaa_v15_project:',
+  'bunaa_v18_project:',
+  'bunaa_v17_project:',
+  'bunaa_v16_project:',
+];
+
+const read = (key, fallback) => {
+  try {
+    const raw = storage.getItem(key);
+    return raw ? JSON.parse(raw) : fallback;
+  } catch {
+    return fallback;
+  }
+};
+const write = (key, value) => storage.setItem(key, JSON.stringify(value));
+const indexKey = userId => `${PROJECT_INDEX_PREFIX}${userId}`;
+const dataKey = (userId, projectId) => `${PROJECT_DATA_PREFIX}${userId}:${projectId}`;
+const cleanName = value => String(value || '').trim().replace(/\s+/g, ' ');
+class ProjectRepository {
+  list(userId) {
+    if (!userId) return [];
+    const index = read(indexKey(userId), {version: REPOSITORY_VERSION, projects: []});
+    const projects = Array.isArray(index?.projects) ? index.projects : [];
+    const valid = projects.filter(item => item?.id && item?.name);
+    if (valid.length !== projects.length) this._writeIndex(userId, valid);
+    return deepClone(valid.sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt))));
+  }
+
+  get(userId, projectId) {
+    if (!userId || !projectId) return null;
+    const stored = read(dataKey(userId, projectId), null);
+    if (stored) return migrateProject(stored);
+    return null;
+  }
+
+  getFirst(userId) {
+    const first = this.list(userId)[0];
+    return first ? this.get(userId, first.id) : null;
+  }
+
+  create(userId, {name = 'مشروعي', template = null, seed = {}} = {}) {
+    if (!userId) throw new Error('لا يمكن إنشاء مشروع بدون حساب.');
+    const id = uid('project');
+    const base = makeProject({ownerId: userId, name: cleanName(name) || 'مشروعي'});
+    const project = migrateProject({
+      ...base,
+      ...deepClone(seed),
+      meta: {
+        ...base.meta,
+        ...(seed.meta || {}),
+        id,
+        ownerId: userId,
+        name: cleanName(name) || 'مشروعي',
+      },
+    });
+    if (template) {
+      project.meta.template = String(template);
+    }
+    this.save(userId, project);
+    return project;
+  }
+
+  save(userId, project) {
+    if (!userId) throw new Error('لا يمكن حفظ مشروع بدون حساب.');
+    const normalized = migrateProject(deepClone(project));
+    normalized.meta.id = String(normalized.meta.id || uid('project'));
+    normalized.meta.ownerId = userId;
+    normalized.meta.updatedAt = new Date().toISOString();
+    if (!normalized.meta.createdAt) normalized.meta.createdAt = normalized.meta.updatedAt;
+    write(dataKey(userId, normalized.meta.id), normalized);
+
+    const existing = this.list(userId).filter(item => item.id !== normalized.meta.id);
+    const meta = {
+      id: normalized.meta.id,
+      name: normalized.meta.name,
+      createdAt: normalized.meta.createdAt,
+      updatedAt: normalized.meta.updatedAt,
+      pages: normalized.pages.length,
+      nodes: this._nodeCount(normalized),
+      activePageId: normalized.activePageId,
+      template: normalized.meta.template || '',
+    };
+    this._writeIndex(userId, [meta, ...existing]);
+    return deepClone(normalized);
+  }
+
+  rename(userId, projectId, name) {
+    const project = this.get(userId, projectId);
+    if (!project) return null;
+    project.meta.name = cleanName(name) || project.meta.name;
+    return this.save(userId, project);
+  }
+
+  duplicate(userId, projectId, name) {
+    const source = this.get(userId, projectId);
+    if (!source) return null;
+    const copy = deepClone(source);
+    copy.meta = {
+      ...copy.meta,
+      id: uid('project'),
+      ownerId: userId,
+      name: cleanName(name) || `${source.meta.name} — نسخة`,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    return this.save(userId, copy);
+  }
+
+  exportProject(userId, projectId) {
+    return this.get(userId, projectId);
+  }
+
+  importProject(userId, project, { duplicateId = true } = {}) {
+    if (!userId) throw new Error('لا يمكن استيراد مشروع بدون حساب.');
+    const copy = migrateProject(deepClone(project));
+    if (duplicateId || !copy.meta?.id || this.get(userId, copy.meta.id)) copy.meta.id = uid('project');
+    copy.meta.ownerId = userId;
+    copy.meta.createdAt = new Date().toISOString();
+    copy.meta.updatedAt = copy.meta.createdAt;
+    return this.save(userId, copy);
+  }
+
+  remove(userId, projectId) {
+    if (!userId || !projectId) return false;
+    const existed = Boolean(storage.getItem(dataKey(userId, projectId)));
+    storage.removeItem(dataKey(userId, projectId));
+    if (existed) this._writeIndex(userId, this.list(userId).filter(item => item.id !== projectId));
+    return existed;
+  }
+
+  migrateLegacy(userId) {
+    if (!userId) return [];
+    if (this.list(userId).length) return this.list(userId);
+    for (const prefix of LEGACY_PROJECT_PREFIXES) {
+      const legacy = read(`${prefix}${userId}`, null);
+      if (!legacy) continue;
+      const project = migrateProject(legacy);
+      project.meta.id = uid('project');
+      project.meta.ownerId = userId;
+      this.save(userId, project);
+      return this.list(userId);
+    }
+    const anonymousKeys = ['bunaa_v11_improved_project', 'bunaa_v11_phase3_project', 'bunaa_v11_project', 'bunaa_project'];
+    for (const key of anonymousKeys) {
+      const legacy = read(key, null);
+      if (!legacy) continue;
+      const project = migrateProject(legacy);
+      project.meta.id = uid('project');
+      project.meta.ownerId = userId;
+      this.save(userId, project);
+      try { storage.setItem(`${key}:migrated:v26`, '1'); } catch {}
+      return this.list(userId);
+    }
+    return [];
+  }
+
+  _writeIndex(userId, projects) {
+    write(indexKey(userId), {version: REPOSITORY_VERSION, projects: deepClone(projects)});
+  }
+
+  _nodeCount(project) {
+    let count = 0;
+    const walk = nodes => (nodes || []).forEach(node => { count += 1; walk(node.children); });
+    (project.pages || []).forEach(page => walk(page.nodes));
+    return count;
+  }
+}
+exports.REPOSITORY_VERSION = REPOSITORY_VERSION;
+exports.PROJECT_INDEX_PREFIX = PROJECT_INDEX_PREFIX;
+exports.PROJECT_DATA_PREFIX = PROJECT_DATA_PREFIX;
+exports.LEGACY_PROJECT_PREFIXES = LEGACY_PROJECT_PREFIXES;
+exports.ProjectRepository = ProjectRepository;
+exports.indexKey = indexKey;
+exports.dataKey = dataKey;
+});
+__modules.set("src/core/quality.js",(exports,__require)=>{
+const {walk,countNodes} = __require("src/core/model.js");
+const {safeUrl} = __require("src/core/utils.js");
+const {resolvePageTarget} = __require("src/engine/routing.js");
+const AUDIT_LEVELS = Object.freeze(['error','warning','info']);
+
+const issue = (category, severity, title, detail, meta = {}) => ({
+  id: `${category}:${title}`,
+  category,
+  severity,
+  title,
+  detail,
+  ...meta,
+});
+function auditProject(project = {}) {
+  const errors = [];
+  const warnings = [];
+  const info = [];
+  const pages = Array.isArray(project.pages) ? project.pages : [];
+  const pagePaths = new Map();
+  const assets = Array.isArray(project.assets) ? project.assets : [];
+  const ids = new Set();
+
+  if (!project.site?.title?.trim()) errors.push(issue('seo','error','الموقع بدون عنوان عام.','أضف عنوان الموقع من إعدادات الموقع.'));
+  if (!project.site?.description?.trim()) warnings.push(issue('seo','warning','الوصف العام للموقع فارغ.','أضف وصفًا مختصرًا وواضحًا للموقع.'));
+  if (!project.site?.favicon) warnings.push(issue('brand','warning','لا توجد Favicon.','أضف أيقونة للموقع.'));
+  if (!project.site?.baseUrl) warnings.push(issue('seo','warning','Base URL غير محدد.','حدده قبل تصدير sitemap وcanonical للإنتاج.'));
+  if (!pages.length) errors.push(issue('structure','error','المشروع لا يحتوي صفحات.','أنشئ صفحة واحدة على الأقل.'));
+  if (pages.length > 1) info.push(issue('structure','info',`${pages.length} صفحات في الموقع.`,'تنقل الصفحات مستقل عن ترتيبها في المستند.'));
+
+  for (const page of pages) {
+    if (ids.has(page.id)) errors.push(issue('structure','error',`معرّف صفحة مكرر: ${page.name}.`,'يجب أن تكون لكل صفحة هوية مستقلة.'));
+    ids.add(page.id);
+    const path = String(page.path || '').trim() || '/';
+    if (pagePaths.has(path)) errors.push(issue('routing','error',`مسار صفحة مكرر: ${path}.`,'غيّر مسار إحدى الصفحات.'));
+    else pagePaths.set(path,page.id);
+    if (!String(page.seo?.title || '').trim()) warnings.push(issue('seo','warning',`عنوان SEO فارغ في «${page.name}».`,'أضف عنوانًا خاصًا بالصفحة.'));
+    if (String(page.seo?.title || '').length > 60) info.push(issue('seo','info',`عنوان SEO طويل في «${page.name}».`,'راجع طوله لتحسين الظهور في نتائج البحث.'));
+    if (String(page.seo?.description || '').length > 160) info.push(issue('seo','info',`وصف SEO طويل في «${page.name}».`,'راجع الوصف لتقليل الاقتطاع في النتائج.'));
+    let h1 = 0;
+    walk(page.nodes, node => {
+      if (!node?.id) warnings.push(issue('structure','warning',`عنصر بدون ID في «${page.name}».`,'أعد إدراجه من Document Model.'));
+      if (node?.id) ids.add(node.id);
+      if (node.type === 'heading') {
+        const level = Number(node.props?.level || 2);
+        if (level === 1) h1 += 1;
+        if (!String(node.props?.text || '').trim()) warnings.push(issue('content','warning',`عنوان فارغ في «${page.name}».`,'أدخل نصًا للعنوان.'));
+      }
+      if (node.type === 'image' && !String(node.props?.alt || '').trim()) warnings.push(issue('a11y','warning',`صورة بدون وصف بديل في «${page.name}».`,'أضف alt وصفيًا.'));
+      if (node.type === 'image' && !String(node.props?.src || '').trim()) warnings.push(issue('assets','warning',`صورة بدون مصدر في «${page.name}».`,'اختر وسيطًا من مكتبة الأصول.'));
+      if (['button','link','card','product'].includes(node.type)) {
+        const url = String(node.props?.url || '').trim();
+        if (!url || url === '#') warnings.push(issue('links','warning',`رابط غير مكتمل في «${page.name}».`,'حدد صفحة أو رابطًا خارجيًا.'));
+        if (url.startsWith('page:') && !resolvePageTarget(url, project)) errors.push(issue('links','error',`رابط داخلي مكسور في «${page.name}».`,'الصفحة المستهدفة غير موجودة.'));
+        if (/^javascript:/i.test(url)) errors.push(issue('security','error',`رابط غير آمن في «${page.name}».`,'تم رفض javascript: كوجهة.'));
+      }
+      if (node.type === 'form' && !node.props?.action) info.push(issue('forms','info',`النموذج في «${page.name}» لا يملك جهة إرسال.`,'هذه واجهة فقط حتى تضبط جهة الإرسال.'));
+      if (['input','textarea','select'].includes(node.type) && !node.semantic?.ariaLabel && !node.props?.label) warnings.push(issue('a11y','warning',`حقل بدون تسمية واضحة في «${page.name}».`,'أضف label أو aria-label.'));
+    });
+    if (h1 === 0) warnings.push(issue('seo','warning',`صفحة «${page.name}» بلا H1.`,'استخدم H1 واحدًا واضحًا.'));
+    if (h1 > 1) warnings.push(issue('seo','warning',`صفحة «${page.name}» تحتوي أكثر من H1.`,'اختصر التسلسل إلى عنوان رئيسي واحد.'));
+  }
+
+  const duplicateAssets = assets.length - new Set(assets.map(asset => asset.id)).size;
+  if (duplicateAssets > 0) warnings.push(issue('assets','warning',`${duplicateAssets} أصول مكررة المعرف.`,'سيتم إزالة التكرار أثناء normalization.'));
+  const largeAssets = assets.filter(asset => Number(asset.size || 0) > 2_000_000);
+  if (largeAssets.length) info.push(issue('performance','info',`${largeAssets.length} أصول أكبر من 2MB.`,'ضغط الصور قبل التصدير يساعد الأداء.'));
+  const externalLinks = pages.reduce((count,page)=>{let n=0;walk(page.nodes,node=>{for(const key of ['url','src']){const v=String(node.props?.[key]||'');if(v&&safeUrl(v)!=='#'&&/^https?:\/\//i.test(v))n++}});return count+n},0);
+  if (externalLinks) info.push(issue('links','info',`${externalLinks} وجهات خارجية.`,'راجع الروابط الخارجية قبل النشر.'));
+
+  const all = [...errors,...warnings,...info];
+  const score = Math.max(0, Math.min(100, 100 - errors.length * 14 - warnings.length * 4 - info.length));
+  return { score, issues: errors, warnings, info, nodes: countNodes(project), pages: pages.length, assets: assets.length, summary: { errors: errors.length, warnings: warnings.length, info: info.length, score }, all };
+}
+exports.AUDIT_LEVELS = AUDIT_LEVELS;
+exports.auditProject = auditProject;
+});
+__modules.set("src/core/runtime.js",(exports,__require)=>{
+const {storageInfo} = __require("src/core/storage.js");
+const RUNTIME_VERSION='27.0.0';
+function getClientRuntime(){return {runtime:'html',offline:true,mode:'direct-file',version:RUNTIME_VERSION,storage:storageInfo(),crypto:Boolean(globalThis.crypto?.subtle)}}
+exports.RUNTIME_VERSION = RUNTIME_VERSION;
+exports.getClientRuntime = getClientRuntime;
+});
+__modules.set("src/core/site-schema.js",(exports,__require)=>{
+const {deepClone,uid,slugify} = __require("src/core/utils.js");
+const SITE_SCHEMA_VERSION = 20;
+const DEFAULT_SITE = {
+  title: 'موقع جديد',
+  description: 'موقع تم بناؤه باستخدام بَنّاء.',
+  language: 'ar',
+  direction: 'rtl',
+  locale: 'ar-OM',
+  baseUrl: '',
+  favicon: '',
+  socialImage: '',
+  author: '',
+  brand: { name: 'بَنّاء', logo: '', mark: 'ب' },
+  analytics: { provider: 'none', measurementId: '' },
+  indexing: { robots: 'index,follow', sitemap: true },
+  links: { email: '', phone: '', whatsapp: '' },
+};
+const DEFAULT_NAVIGATION = {
+  menus: [
+    { id: 'main', name: 'الرئيسية', items: [] },
+    { id: 'footer', name: 'التذييل', items: [] },
+  ],
+  headerMenuId: 'main',
+  footerMenuId: 'footer',
+};
+const DEFAULT_CMS = { collections: [] };
+const DEFAULT_SYMBOLS = { definitions: [] };
+const DEFAULT_GLOBALS = { header: null, footer: null };
+const DEFAULT_STYLE_LIBRARY = { classes: {}, textStyles: {}, effects: {}, components: {}, states: {} };
+
+const isObject = value => value && typeof value === 'object' && !Array.isArray(value);
+function makeCollection(name = 'مجموعة جديدة', fields = []) {
+  const clean = String(name || '').trim() || 'مجموعة جديدة';
+  const key = slugify(clean).replace(/-/g, '_') || `collection_${Date.now()}`;
+  return {
+    id: uid('collection'),
+    name: clean,
+    key,
+    route: `/${slugify(clean)}`,
+    fields: fields.length ? deepClone(fields) : [
+      { id: uid('field'), key: 'title', label: 'العنوان', type: 'text', required: true },
+      { id: uid('field'), key: 'slug', label: 'الرابط', type: 'slug', required: true },
+      { id: uid('field'), key: 'body', label: 'المحتوى', type: 'richtext', required: false },
+      { id: uid('field'), key: 'image', label: 'الصورة', type: 'image', required: false },
+    ],
+    items: [],
+    settings: { public: true, sortBy: 'createdAt', sortDirection: 'desc' },
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+}
+function makeCmsItem(collection, data = {}) {
+  return {
+    id: uid('item'),
+    collectionId: collection?.id || null,
+    slug: String(data.slug || data.title || 'item').trim().toLowerCase().replace(/\s+/g, '-'),
+    data: isObject(data) ? deepClone(data) : {},
+    status: 'published',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+}
+function makeSymbol(name = 'مكون مشترك', root = null, options = {}) {
+  return {
+    id: uid('symbol'),
+    name: String(name || 'مكون مشترك').trim() || 'مكون مشترك',
+    description: String(options.description || ''),
+    root: root ? deepClone(root) : null,
+    props: isObject(options.props) ? deepClone(options.props) : {},
+    slots: Array.isArray(options.slots) ? deepClone(options.slots) : [],
+    scope: options.scope === 'page' ? 'page' : 'site',
+    version: 1,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+}
+function normalizeSite(site = {}) {
+  return { ...deepClone(DEFAULT_SITE), ...(isObject(site) ? deepClone(site) : {}), brand: { ...DEFAULT_SITE.brand, ...(site?.brand || {}) }, analytics: { ...DEFAULT_SITE.analytics, ...(site?.analytics || {}) }, indexing: { ...DEFAULT_SITE.indexing, ...(site?.indexing || {}) }, links: { ...DEFAULT_SITE.links, ...(site?.links || {}) } };
+}
+function normalizeNavigation(navigation = {}) {
+  const menus = Array.isArray(navigation.menus) && navigation.menus.length ? navigation.menus : deepClone(DEFAULT_NAVIGATION.menus);
+  return {
+    ...deepClone(DEFAULT_NAVIGATION),
+    ...(isObject(navigation) ? deepClone(navigation) : {}),
+    menus: menus.map(menu => ({ id: String(menu?.id || uid('menu')), name: String(menu?.name || 'قائمة'), items: Array.isArray(menu?.items) ? deepClone(menu.items) : [] })),
+  };
+}
+function normalizeCms(cms = {}) {
+  return {
+    collections: Array.isArray(cms?.collections) ? deepClone(cms.collections).map(collection => ({
+      ...collection,
+      fields: Array.isArray(collection.fields) ? collection.fields : [],
+      items: Array.isArray(collection.items) ? collection.items : [],
+      settings: { public: true, sortBy: 'createdAt', sortDirection: 'desc', ...(collection.settings || {}) },
+    })) : [],
+  };
+}
+function normalizeSymbols(symbols = {}) {
+  return { definitions: Array.isArray(symbols?.definitions) ? deepClone(symbols.definitions).filter(item => item?.id && item?.root) : [] };
+}
+function normalizeGlobals(globals = {}) {
+  return { ...deepClone(DEFAULT_GLOBALS), ...(isObject(globals) ? deepClone(globals) : {}) };
+}
+function normalizeStyleLibrary(library = {}) {
+  return { ...deepClone(DEFAULT_STYLE_LIBRARY), ...(isObject(library) ? deepClone(library) : {}), classes: isObject(library?.classes) ? deepClone(library.classes) : {}, textStyles: isObject(library?.textStyles) ? deepClone(library.textStyles) : {}, effects: isObject(library?.effects) ? deepClone(library.effects) : {}, components: isObject(library?.components) ? deepClone(library.components) : {}, states: isObject(library?.states) ? deepClone(library.states) : {} };
+}
+exports.SITE_SCHEMA_VERSION = SITE_SCHEMA_VERSION;
+exports.DEFAULT_SITE = DEFAULT_SITE;
+exports.DEFAULT_NAVIGATION = DEFAULT_NAVIGATION;
+exports.DEFAULT_CMS = DEFAULT_CMS;
+exports.DEFAULT_SYMBOLS = DEFAULT_SYMBOLS;
+exports.DEFAULT_GLOBALS = DEFAULT_GLOBALS;
+exports.DEFAULT_STYLE_LIBRARY = DEFAULT_STYLE_LIBRARY;
+exports.makeCollection = makeCollection;
+exports.makeCmsItem = makeCmsItem;
+exports.makeSymbol = makeSymbol;
+exports.normalizeSite = normalizeSite;
+exports.normalizeNavigation = normalizeNavigation;
+exports.normalizeCms = normalizeCms;
+exports.normalizeSymbols = normalizeSymbols;
+exports.normalizeGlobals = normalizeGlobals;
+exports.normalizeStyleLibrary = normalizeStyleLibrary;
+});
+__modules.set("src/core/storage.js",(exports,__require)=>{
+class MemoryStorage{constructor(){this.map=new Map()}getItem(key){return this.map.has(String(key))?this.map.get(String(key)):null}setItem(key,value){this.map.set(String(key),String(value))}removeItem(key){this.map.delete(String(key))}clear(){this.map.clear()}key(index){return [...this.map.keys()][index]??null}get length(){return this.map.size}}
+const memory=new MemoryStorage();
+let cached=null;
+function getStorage(){if(cached)return cached;try{const candidate=globalThis.localStorage;const probe='__bunaa_storage_probe__';candidate.setItem(probe,'1');candidate.removeItem(probe);cached=candidate}catch{cached=memory}return cached}
+function storageInfo(){const s=getStorage();return {kind:s===memory?'memory':'localStorage',persistent:s!==memory,available:Boolean(s)}}
+const storage=getStorage();
+exports.getStorage = getStorage;
+exports.storageInfo = storageInfo;
+exports.storage = storage;
+});
+__modules.set("src/core/store.js",(exports,__require)=>{
+const {storage} = __require("src/core/storage.js");
+const {deepClone,debounce} = __require("src/core/utils.js");
+const {makeProject,normalizeProject,findNodeGlobal,countNodes,makePage,nextPageName,collectIds} = __require("src/core/model.js");
+const {ProjectRepository} = __require("src/core/project-repository.js");
+const UI_KEY='bunaa_v26_ui';
+const DEFAULT_UI={mode:'normal',device:'desktop',leftTab:'elements',leftOpen:true,rightOpen:true,zoom:1,grid:true,focus:false,interactionMode:false,advancedDevices:false,selected:null,saveError:false};
+const readJson=key=>{try{const raw=storage.getItem(key);return raw?JSON.parse(raw):null}catch{return null}};
+class Store{
+  constructor(repository=new ProjectRepository()){
+    this.repo=repository;this.project=makeProject();this.ui={...DEFAULT_UI};this.userId=null;this.projectId=null;this.history=[];this.future=[];this.maxHistory=100;this.subscribers=new Set();this.restorable=false;this.dirty=false;this.lastSavedAt=null;this.saveState='saved';this.persist=debounce(()=>this.persistNow(),500);
+  }
+  uiKey(){return this.userId?`${UI_KEY}:${this.userId}`:UI_KEY}
+  legacyUiKeys(){return this.userId?[`bunaa_v25_ui:${this.userId}`,`bunaa_v20_ui:${this.userId}`,`bunaa_v19_ui:${this.userId}`,`bunaa_v18_ui:${this.userId}`,`bunaa_v17_ui:${this.userId}`,`bunaa_v16_ui:${this.userId}`,`bunaa_v15_ui:${this.userId}`,`bunaa_v14_ui:${this.userId}`]:['bunaa_v25_ui','bunaa_v20_ui','bunaa_v19_ui','bunaa_v18_ui','bunaa_v17_ui','bunaa_v16_ui','bunaa_v15_ui','bunaa_v14_ui']}
+  setAccount(userId){
+    this.persist.cancel?.();this.userId=String(userId||'')||null;this.projectId=null;this.project=makeProject(this.userId?{ownerId:this.userId}:{});this.ui={...DEFAULT_UI};this.history=[];this.future=[];this.restorable=false;this.dirty=false;this.saveState='saved';
+    const saved=readJson(this.uiKey());if(saved)this.ui={...DEFAULT_UI,...saved};else for(const key of this.legacyUiKeys()){const legacy=readJson(key);if(legacy){this.ui={...DEFAULT_UI,...legacy};break}}
+    if(this.userId)this.repo.migrateLegacy(this.userId);this.reconcileUi();this.emit();return this.userId;
+  }
+  listProjects(){return this.userId?this.repo.list(this.userId):[]}
+  openProject(projectId){
+    if(!this.userId)return false;
+    this.persist.cancel?.();const project=this.repo.get(this.userId,projectId);if(!project)return false;
+    this.project=normalizeProject(project);this.projectId=this.project.meta.id;this.restorable=true;this.dirty=false;this.saveState='saved';this.history=[];this.future=[];this.ui.selected=null;this.reconcileUi();this.emit();return true;
+  }
+  createProject(name='مشروعي',seed={}){
+    if(!this.userId)throw new Error('سجّل الدخول أولًا.');
+    this.persist.cancel?.();const project=this.repo.create(this.userId,{name,seed});this.project=normalizeProject(project);this.projectId=this.project.meta.id;this.restorable=true;this.dirty=false;this.saveState='saved';this.history=[];this.future=[];this.ui.selected=null;this.reconcileUi();this.emit();return this.project;
+  }
+  deleteProject(projectId=this.projectId){
+    if(!this.userId||!projectId)return false;const ok=this.repo.remove(this.userId,projectId);if(ok&&projectId===this.projectId)this.clearProject();return ok;
+  }
+  duplicateProject(projectId=this.projectId,name=''){
+    if(!this.userId||!projectId)return null;const project=this.repo.duplicate(this.userId,projectId,name);return project?normalizeProject(project):null;
+  }
+  clearProject(){this.persist.cancel?.();this.projectId=null;this.project=makeProject(this.userId?{ownerId:this.userId}:{});this.ui.selected=null;this.history=[];this.future=[];this.restorable=false;this.dirty=false;this.saveState='saved';this.emit()}
+  clearAccount(){this.persist.cancel?.();this.userId=null;this.projectId=null;this.project=makeProject();this.ui={...DEFAULT_UI};this.history=[];this.future=[];this.restorable=false;this.dirty=false;this.saveState='saved';this.emit()}
+  get canUndo(){return this.history.length>0}
+  get canRedo(){return this.future.length>0}
+  reconcileUi(){if(!this.project.pages.some(p=>p.id===this.project.activePageId))this.project.activePageId=this.project.pages[0]?.id||null;if(this.ui.selected&&!findNodeGlobal(this.project,this.ui.selected))this.ui.selected=null;if(!['desktop','tablet','mobile'].includes(this.ui.device))this.ui.device='desktop';this.ui.zoom=Math.min(1.5,Math.max(.55,Number(this.ui.zoom)||1));this.ui.leftOpen=Boolean(this.ui.leftOpen);this.ui.rightOpen=Boolean(this.ui.rightOpen)}
+  snapshot(){return deepClone(this.project)}
+  transact(label,mutator,{record=true,persist=true,emit=true}={}){
+    if(typeof mutator!=='function')throw new TypeError('mutator must be a function');const before=this.snapshot();
+    try{mutator(this.project);this.project=normalizeProject(this.project);this.project.meta.id=this.projectId||this.project.meta.id;this.project.meta.ownerId=this.userId||this.project.meta.ownerId}catch(error){this.project=before;throw new Error(`${label}: ${error.message}`,{cause:error})}
+    const after=this.snapshot();const changed=JSON.stringify(before)!==JSON.stringify(after);if(changed){this.project.meta.updatedAt=new Date().toISOString();this.dirty=true;this.saveState='pending';if(record){this.history.push({label,before,after});if(this.history.length>this.maxHistory)this.history.shift();this.future=[]}if(persist)this.persist();if(emit)this.emit()}return changed;
+  }
+  undo(){const op=this.history.pop();if(!op)return false;this.future.push(op);this.project=normalizeProject(op.before);this.reconcileUi();this.markDirty();this.persist();this.emit();return true}
+  redo(){const op=this.future.pop();if(!op)return false;this.history.push(op);this.project=normalizeProject(op.after);this.reconcileUi();this.markDirty();this.persist();this.emit();return true}
+  markDirty(){this.dirty=true;this.saveState='pending';this.project.meta.updatedAt=new Date().toISOString()}
+  subscribe(fn){this.subscribers.add(fn);return()=>this.subscribers.delete(fn)}
+  emit(){for(const fn of [...this.subscribers])try{fn(this.project,this.ui,this)}catch(error){console.error('Store subscriber failed',error)}}
+  setUI(patch,{emit=true}={}){this.ui={...this.ui,...patch};try{storage.setItem(this.uiKey(),JSON.stringify(this.ui))}catch{this.ui.saveError=true}if(emit)this.emit()}
+  persistNow(){
+    this.persist.cancel?.();if(!this.userId||!this.projectId||!this.dirty)return false;try{this.project.meta.updatedAt=new Date().toISOString();this.project=this.repo.save(this.userId,this.project);this.restorable=true;this.dirty=false;this.saveState='saved';this.lastSavedAt=new Date().toISOString();this.ui.saveError=false;storage.setItem(this.uiKey(),JSON.stringify(this.ui));this.emit();return true}catch(error){this.ui.saveError=true;this.saveState='error';console.warn('Project save failed',error);this.emit();return false}
+  }
+  find(id){return findNodeGlobal(this.project,id)}
+  activePage(){return this.project.pages.find(p=>p.id===this.project.activePageId)||this.project.pages[0]}
+  nodeCount(){return countNodes(this.project)}
+  setActivePage(id){if(!this.project.pages.some(p=>p.id===id))return false;const changed=this.project.activePageId!==id;this.project.activePageId=id;this.ui.selected=null;if(changed){this.markDirty();this.persist();this.emit()}return changed}
+  addPage(name=nextPageName(this.project)){let page;this.transact('إضافة صفحة',project=>{page=makePage(String(name).trim()||nextPageName(project));project.pages.push(page);project.activePageId=page.id});this.ui.selected=null;return page}
+  duplicatePage(id=this.project.activePageId){const source=this.project.pages.find(p=>p.id===id);if(!source)return null;const mapping=new Map();let resultId=null;const remap=node=>{const clone=deepClone(node);const oldId=clone.id;clone.id=`${oldId}_${Math.random().toString(36).slice(2,7)}`;mapping.set(oldId,clone.id);clone.children=(clone.children||[]).map(remap);return clone};this.transact('نسخ الصفحة',project=>{const copy=deepClone(source);copy.id=`page_${Date.now().toString(36)}_${Math.random().toString(36).slice(2,6)}`;copy.slug=undefined;copy.name=`${source.name} — نسخة`;copy.nodes=(copy.nodes||[]).map(remap);project.pages.push(copy);project.activePageId=copy.id;const copiedInteractions=(project.interactions||[]).filter(item=>item&&mapping.has(item.sourceId)).map(item=>{const next=deepClone(item);next.id=`int_${Date.now().toString(36)}_${Math.random().toString(36).slice(2,7)}`;next.sourceId=mapping.get(item.sourceId);if(next.options?.targetId&&mapping.has(next.options.targetId))next.options.targetId=mapping.get(next.options.targetId);else if(next.options?.targetId)next.options.targetId=null;return next});project.interactions=[...(project.interactions||[]),...copiedInteractions];resultId=copy.id});this.ui.selected=null;return this.project.pages.find(page=>page.id===resultId)||null}
+  movePage(id,direction){const index=this.project.pages.findIndex(p=>p.id===id);if(index<0)return false;const to=index+(direction==='up'?-1:1);if(to<0||to>=this.project.pages.length)return false;return this.transact(direction==='up'?'نقل الصفحة للأعلى':'نقل الصفحة للأسفل',project=>{[project.pages[index],project.pages[to]]=[project.pages[to],project.pages[index]]})}
+  setHomePage(id){if(!this.project.pages.some(p=>p.id===id))return false;return this.transact('تعيين الصفحة الرئيسية',project=>{const index=project.pages.findIndex(p=>p.id===id);if(index>0){const [page]=project.pages.splice(index,1);project.pages.unshift(page)}})}
+  setPageParent(id,parentId=null){if(!this.project.pages.some(p=>p.id===id))return false;if(parentId&&!this.project.pages.some(p=>p.id===parentId))return false;if(parentId===id)return false;const byId=new Map(this.project.pages.map(p=>[p.id,p]));let cursor=parentId;while(cursor){if(cursor===id)return false;cursor=byId.get(cursor)?.parentId||null}return this.transact('تغيير الصفحة الأب',project=>{const page=project.pages.find(p=>p.id===id);if(page)page.parentId=parentId||null})}
+  deletePage(id=this.project.activePageId){if(this.project.pages.length<=1)return false;const index=this.project.pages.findIndex(p=>p.id===id);if(index<0)return false;const ok=this.transact('حذف صفحة',project=>{project.pages.splice(index,1);project.activePageId=project.pages[Math.max(0,index-1)].id;const ids=collectIds(project);project.interactions=(project.interactions||[]).filter(item=>ids.has(item.sourceId)&&(!item.options?.targetId||ids.has(item.options.targetId))&&(!item.options?.pageId||project.pages.some(page=>page.id===item.options.pageId)))});this.ui.selected=null;this.reconcileUi();return ok}
+}
+exports.UI_KEY = UI_KEY;
+exports.Store = Store;
+});
+__modules.set("src/core/symbols.js",(exports,__require)=>{
+const {deepClone,uid} = __require("src/core/utils.js");
+const {makeSymbol} = __require("src/core/site-schema.js");
+const {findNodeGlobal} = __require("src/core/model.js");
+const {initializeDevicePresetsTree} = __require("src/core/device-presets.js");
+function createSymbolFromSelection(store, name = 'مكون مشترك') {
+  const selectedId = store.ui.selected;
+  const hit = selectedId ? findNodeGlobal(store.project, selectedId) : null;
+  if (!hit) return null;
+  const symbol = makeSymbol(name, hit.node, { description: `مكون مشترك مبني من ${hit.node.type}` });
+  store.transact('إنشاء مكون مشترك', project => { project.symbols ||= { definitions: [] }; project.symbols.definitions.push(symbol); });
+  return symbol;
+}
+function insertSymbol(store, symbolId) {
+  const definition = store.project.symbols?.definitions?.find(item => item.id === symbolId);
+  if (!definition?.root) return null;
+  let node = null;
+  store.transact('إدراج مكون مشترك', project => {
+    const page = project.pages.find(item => item.id === project.activePageId);
+    if (!page) return;
+    node = { id: uid('node'), type: 'symbol-instance', props: { symbolId, overrides: {} }, style: {}, responsive: {}, layout: { display: 'block', direction: 'column', gap: 0, align: 'stretch', justify: 'start', wrap: false }, visibility: { desktop: true, tablet: true, mobile: true }, locked: false, children: [] };
+    initializeDevicePresetsTree([node], store.ui?.device || 'desktop');
+    page.nodes.push(node);
+  });
+  return node;
+}
+function updateSymbol(store, symbolId, patch = {}) {
+  return store.transact('تعديل المكون المشترك', project => {
+    const definition = project.symbols?.definitions?.find(item => item.id === symbolId);
+    if (!definition) return;
+    Object.assign(definition, deepClone(patch), { version: Number(definition.version || 1) + 1, updatedAt: new Date().toISOString() });
+  });
+}
+function removeSymbol(store, symbolId) {
+  return store.transact('حذف المكون المشترك', project => {
+    project.symbols.definitions = (project.symbols.definitions || []).filter(item => item.id !== symbolId);
+    walkPages(project.pages, node => { if (node.type === 'symbol-instance' && node.props?.symbolId === symbolId) node.type = 'group'; });
+  });
+}
+function resolveSymbol(project, symbolId) { return project.symbols?.definitions?.find(item => item.id === symbolId) || null; }
+exports.createSymbolFromSelection = createSymbolFromSelection;
+exports.insertSymbol = insertSymbol;
+exports.updateSymbol = updateSymbol;
+exports.removeSymbol = removeSymbol;
+exports.resolveSymbol = resolveSymbol;
+});
+__modules.set("src/core/utils.js",(exports,__require)=>{
+const clamp=(n,min,max)=>Math.min(max,Math.max(min,n));
+const uid=(prefix='id')=>{const token=globalThis.crypto?.randomUUID?.()||`${Date.now().toString(36)}_${Math.random().toString(36).slice(2,10)}`;return `${prefix}_${token.replace(/[^a-zA-Z0-9_-]/g,'')}`};
+const deepClone=o=>o===undefined?undefined:(typeof structuredClone==='function'?structuredClone(o):JSON.parse(JSON.stringify(o)));
+const isObject=v=>v&&typeof v==='object'&&!Array.isArray(v);
+const escapeHtml=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
+const escapeAttr=escapeHtml;
+const slugify=text=>{const s=String(text||'').normalize('NFKC').trim().toLowerCase().replace(/[^\p{L}\p{N}]+/gu,'-').replace(/^-+|-+$/g,'');return s||`page-${uid('slug').slice(-8)}`};
+const debounce=(fn,wait=250)=>{let t;const wrapped=(...args)=>{clearTimeout(t);t=setTimeout(()=>fn(...args),wait)};wrapped.cancel=()=>clearTimeout(t);return wrapped};
+function safeUrl(url=''){const s=String(url??'').trim();if(!s||s==='#')return '#';if(/^(javascript|vbscript|file|data):/i.test(s))return '#';if(/^(https?:|mailto:|tel:)/i.test(s))return s;if(/^[/#.][^\s]*$/.test(s)||/^[^:\s]+(?:[/#][^\s]*)?$/.test(s))return s;return '#'}
+function safeMediaUrl(url='',kind='any'){
+  const s=String(url??'').trim();if(!s)return '';
+  if(/^https?:/i.test(s)||/^blob:/i.test(s))return s;
+  if(kind==='image'&&(/^data:image\/(?:png|jpe?g|gif|webp|avif|svg\+xml)(?:;[\w=.+-]+)*(?:;base64)?,/i.test(s)))return s;
+  if(kind==='audio'&&/^data:audio\/[\w.+-]+(?:;[\w=.+-]+)*(?:;base64)?,/i.test(s))return s;
+  if(kind==='video'&&/^data:video\/[\w.+-]+(?:;[\w=.+-]+)*(?:;base64)?,/i.test(s))return s;
+  if(/^(?:\.\.?\/|\/|assets\/|images\/)[^\s<>\"']+$/i.test(s)&&!/^(?:\/\/|\/\\)/.test(s))return s;
+  return '';
+}
+const dataUrlFromFile=file=>new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(r.result);r.onerror=()=>reject(r.error||new Error('فشل قراءة الملف'));r.readAsDataURL(file)});
+const formatBytes=b=>{const n=Number(b)||0;return n<1024?`${n} B`:n<1048576?`${(n/1024).toFixed(1)} KB`:`${(n/1048576).toFixed(2)} MB`};
+const downloadBlob=(blob,name)=>{const anchor=document.createElement('a');const url=URL.createObjectURL(blob);anchor.href=url;anchor.download=name;document.body.appendChild(anchor);anchor.click();anchor.remove();setTimeout(()=>URL.revokeObjectURL(url),1000)};
+const downloadText=(content,name,type='text/plain;charset=utf-8')=>downloadBlob(new Blob([content],{type}),name);
+const throttle=(fn,wait=80)=>{let last=0,timer=null;return (...args)=>{const now=Date.now(),remaining=wait-(now-last);if(remaining<=0){clearTimeout(timer);timer=null;last=now;fn(...args)}else if(!timer){timer=setTimeout(()=>{timer=null;last=Date.now();fn(...args)},remaining)}}};
+const deepMerge=(base,patch)=>{if(!isObject(base)||!isObject(patch))return deepClone(patch);const out=deepClone(base);for(const [key,value] of Object.entries(patch))out[key]=isObject(value)&&isObject(out[key])?deepMerge(out[key],value):deepClone(value);return out};
+const textToLines=text=>String(text||'').split(/\n+/).map(s=>s.trim()).filter(Boolean);
+exports.clamp = clamp;
+exports.uid = uid;
+exports.deepClone = deepClone;
+exports.isObject = isObject;
+exports.escapeHtml = escapeHtml;
+exports.escapeAttr = escapeAttr;
+exports.slugify = slugify;
+exports.debounce = debounce;
+exports.safeUrl = safeUrl;
+exports.safeMediaUrl = safeMediaUrl;
+exports.dataUrlFromFile = dataUrlFromFile;
+exports.formatBytes = formatBytes;
+exports.downloadBlob = downloadBlob;
+exports.downloadText = downloadText;
+exports.throttle = throttle;
+exports.deepMerge = deepMerge;
+exports.textToLines = textToLines;
+});
+__modules.set("src/core/variables.js",(exports,__require)=>{
+const {deepClone,uid} = __require("src/core/utils.js");
+const VARIABLE_TYPES=Object.freeze(['text','number','color','url','boolean','json']);
+const RESERVED_VARIABLES=new Set(['_meta']);
+function normalizeVariables(source={}){
+  const out={};
+  if(source&&typeof source==='object'&&!Array.isArray(source)){
+    for(const [key,raw] of Object.entries(source)){
+      if(RESERVED_VARIABLES.has(key)) continue;
+      if(raw&&typeof raw==='object'&&!Array.isArray(raw)&&('value' in raw || 'type' in raw)){
+        out[key]={id:String(raw.id||uid('var')),name:String(raw.name||key),type:VARIABLE_TYPES.includes(raw.type)?raw.type:'text',value:deepClone(raw.value??''),description:String(raw.description||'')};
+      }else out[key]={id:uid('var'),name:key,type:'text',value:deepClone(raw),description:''};
+    }
+  }
+  return out;
+}
+function listVariables(project){return Object.entries(normalizeVariables(project?.variables)).map(([key,v])=>({key,...v})).sort((a,b)=>a.name.localeCompare(b.name,'ar'))}
+function getVariable(project,key,fallback=''){const value=normalizeVariables(project?.variables)[String(key||'')];return value?deepClone(value.value):fallback}
+function setVariable(store,key,patch={}){
+  const clean=String(key||'').trim().replace(/[^a-zA-Z0-9_\u0600-\u06ff-]/g,'_');
+  if(!clean||RESERVED_VARIABLES.has(clean)) return false;
+  return store.transact('تعديل متغير الموقع',project=>{
+    project.variables=normalizeVariables(project.variables);
+    const current=project.variables[clean]||{id:uid('var'),name:clean,type:'text',value:'',description:''};
+    project.variables[clean]={...current,...deepClone(patch),id:current.id||uid('var'),name:String(patch.name||current.name||clean),type:VARIABLE_TYPES.includes(patch.type)?patch.type:(current.type||'text')};
+  });
+}
+function removeVariable(store,key){return store.transact('حذف متغير الموقع',project=>{if(project.variables)delete project.variables[String(key||'')];})}
+function resolveVariableValue(value,project){
+  if(typeof value!=='string') return value;
+  const exact=value.match(/^var:([a-zA-Z0-9_\u0600-\u06ff-]+)$/);
+  if(exact) return getVariable(project,exact[1],value);
+  return value.replace(/\{\{var:([a-zA-Z0-9_\u0600-\u06ff-]+)\}\}/g,(_,key)=>String(getVariable(project,key,'')));
+}
+exports.VARIABLE_TYPES = VARIABLE_TYPES;
+exports.RESERVED_VARIABLES = RESERVED_VARIABLES;
+exports.normalizeVariables = normalizeVariables;
+exports.listVariables = listVariables;
+exports.getVariable = getVariable;
+exports.setVariable = setVariable;
+exports.removeVariable = removeVariable;
+exports.resolveVariableValue = resolveVariableValue;
+});
+__modules.set("src/engine/exporter.js",(exports,__require)=>{
+const {nodeHtml} = __require("src/engine/renderer.js");
+const {escapeHtml,downloadText,downloadBlob,deepClone,safeUrl} = __require("src/core/utils.js");
+const {resolveStyle,styleObjectToCss} = __require("src/engine/layout.js");
+const {themeCss} = __require("src/core/design-system.js");
+const {normalizeAssets} = __require("src/core/assets.js");
+
+function safeName(value){return String(value||'project').normalize('NFKC').replace(/[^\p{L}\p{N}_-]+/gu,'-').replace(/-+/g,'-').slice(0,60)||'project'}
+function assetBytes(data){
+  const text=String(data||'');const match=text.match(/^data:([^;,]+)?(;base64)?,(.*)$/s);if(!match)return null;
+  try{if(match[2]){const bin=atob(match[3]);const bytes=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);return bytes}return new TextEncoder().encode(decodeURIComponent(match[3]))}catch{return null}
+}
+function safeAssetFilename(value,fallback='asset.bin'){
+  const raw=String(value||fallback).replace(/\\/g,'/').split('/').pop()||fallback;
+  return raw.normalize('NFKC').replace(/[^\p{L}\p{N}._-]+/gu,'-').replace(/^\.+/,'').slice(0,120)||fallback;
+}
+
+function assetPathMap(assets){
+  const out=new Map(),used=new Set();
+  for(const asset of normalizeAssets(assets||[])){
+    let filename=String(asset.filename||asset.name||'asset').replace(/\\/g,'/').split('/').pop()||'asset';
+    if(!/\.[a-z0-9]{1,8}$/i.test(filename)){
+      const dataMime=String(asset.type||asset.data?.match?.(/^data:([^;,]+)/i)?.[1]||'').toLowerCase();
+      const ext=extensionFromMime(dataMime)!=='bin'?extensionFromMime(dataMime):({image:'png',video:'mp4',audio:'mp3',font:'woff2',document:'pdf'}[String(asset.kind||'').toLowerCase()]||'bin');
+      filename+='.'+ext;
+    }
+    filename=safeAssetFilename(filename,'asset.bin');
+    let path=`assets/${filename}`;const dot=filename.lastIndexOf('.'),stem=dot>0?filename.slice(0,dot):filename,ext=dot>0?filename.slice(dot):'';let n=2;
+    while(used.has(path.toLowerCase())){path=`assets/${stem}-${n++}${ext}`}
+    used.add(path.toLowerCase());out.set(asset.id,path);
+  }
+  return out;
+}
+
+function assetFileMap(project,resources={}){
+  const map=new Map();const byAssetId=resources.byAssetId instanceof Map?resources.byAssetId:new Map();const desired=assetPathMap(project.assets);
+  for(const asset of normalizeAssets(project.assets)){const fetched=byAssetId.get(asset.id);if(assetBytes(asset.data)||fetched?.bytes)map.set(asset.id,fetched?.path||desired.get(asset.id));}
+  return map;
+}
+function pageFileMap(project){const used=new Set(['index.html','styles.css','script.js','project.json','README.md','site.json','manifest.webmanifest','robots.txt','sitemap.xml','404.html']);const map=new Map();for(const [index,page] of project.pages.entries()){if(index===0){map.set(page.id,'index.html');continue}const base=safeName(page.slug||page.name)||`page-${index+1}`;let file=`${base}.html`,n=2;while(used.has(file))file=`${base}-${n++}.html`;used.add(file);map.set(page.id,file)}return map}
+function hashText(value){let h=2166136261;for(const c of String(value))h=Math.imul(h^c.charCodeAt(0),16777619);return (h>>>0).toString(16).padStart(8,'0')}
+function extensionFromMime(mime=''){const type=String(mime).toLowerCase().split(';')[0];const map={'image/jpeg':'jpg','image/png':'png','image/gif':'gif','image/webp':'webp','image/avif':'avif','image/svg+xml':'svg','video/mp4':'mp4','video/webm':'webm','audio/mpeg':'mp3','audio/wav':'wav','audio/ogg':'ogg','font/woff':'woff','font/woff2':'woff2','application/pdf':'pdf'};return map[type]||'bin'}
+function extensionFromUrl(url=''){try{const name=decodeURIComponent(new URL(url,globalThis.location?.href||'https://example.invalid/').pathname.split('/').pop()||'');const match=name.match(/\.([a-z0-9]{1,8})$/i);return match?match[1].toLowerCase():''}catch{return ''}}
+function guessKindFromUrl(url='',fallback='image'){const ext=extensionFromUrl(url);if(['mp4','webm','ogv','mov','m4v'].includes(ext))return 'video';if(['mp3','wav','ogg','weba','m4a','aac'].includes(ext))return 'audio';if(['woff','woff2','ttf','otf'].includes(ext))return 'font';if(['pdf','txt','zip','doc','docx'].includes(ext))return 'document';return fallback}
+function mediaPath(url,mime='',fallback='image'){const ext=extensionFromMime(mime)==='bin'?(extensionFromUrl(url)||'bin'):extensionFromMime(mime);return `assets/external-${hashText(url)}.${ext}`}
+function addCandidate(candidates,url,kind='image',preferredPath='',assetId=''){
+  const raw=String(url||'').trim();if(!/^(?:https?:|blob:)/i.test(raw))return;
+  let entry=candidates.get(raw);if(!entry){entry={url:raw,kinds:new Set(),preferredPath:'',assetIds:[]};candidates.set(raw,entry)}
+  entry.kinds.add(kind||'image');if(preferredPath&&!entry.preferredPath)entry.preferredPath=preferredPath;if(assetId&&!entry.assetIds.includes(assetId))entry.assetIds.push(assetId);
+}
+function extractCssUrls(value){const out=[];const text=String(value||'');const re=/url\(\s*(['"]?)(https?:\/\/[^)'"\s]+|blob:[^)'"\s]+)\1\s*\)/gi;let match;while((match=re.exec(text)))out.push(match[2]);return out}
+function walkNodes(nodes,fn){for(const node of nodes||[]){fn(node);walkNodes(node.children,fn)}}
+function collectMediaCandidates(project){
+  const candidates=new Map();const localPaths=assetPathMap(project.assets);
+  for(const asset of normalizeAssets(project.assets)){
+    if(assetBytes(asset.data)){
+      if(/^https?:/i.test(asset.url||''))addCandidate(candidates,asset.url,asset.kind,localPaths.get(asset.id),asset.id);
+      continue;
+    }
+    const raw=/^(?:https?:|blob:)/i.test(asset.data||'')?asset.data:asset.url;
+    if(raw)addCandidate(candidates,raw,asset.kind,localPaths.get(asset.id),asset.id);
+  }
+  const visitNode=node=>{
+    const p=node.props||{};const add=(value,kind='image')=>{if(typeof value==='string')addCandidate(candidates,value,kind)};
+    if(node.type==='image'){add(p.src||p.url,'image')}
+    else if(node.type==='gallery'){for(const item of (Array.isArray(p.images)?p.images:Array.isArray(p.items)?p.items:[]))add(typeof item==='string'?item:(item?.src||item?.image),'image')}
+    else if(node.type==='avatar'||node.type==='logo'){add(p.src,'image')}
+    else if(node.type==='image-text'||node.type==='hero-split'){add(p.image,'image')}
+    else if(node.type==='video'){add(p.src,'video');if(/\.(?:mp4|webm|mov|m4v)(?:[?#]|$)/i.test(p.url||''))add(p.url,'video')}
+    else if(node.type==='audio'){add(p.src,'audio')}
+    else if(node.type==='download'||node.type==='file'){if(/\.(?:pdf|zip|txt|docx?|xlsx?|pptx?|png|jpe?g|webp)(?:[?#]|$)/i.test(p.url||''))add(p.url,'document')}
+    else if(['blog-grid','product-grid','portfolio-grid','testimonial-carousel','filterable-gallery'].includes(node.type)){
+      for(const item of (Array.isArray(p.items)?p.items:[]))if(item&&typeof item==='object')add(item.image||item.src,'image');
+    }
+    // Walk every props object so media in newer/third-party-like component records is exported too.
+    const mediaKey=key=>/(?:^|_)(?:src|image|images|poster|cover|thumbnail|favicon|logo|backgroundimage|audio|video|font|mediaurl|downloadurl)$/i.test(String(key).replace(/[A-Z]/g,m=>'_'+m.toLowerCase()))||['src','image','images','poster','cover','thumbnail','favicon','logo','audio','video','font','mediaUrl','downloadUrl'].includes(key);
+    const walkMedia=(value,key='',seen=new Set())=>{if(typeof value==='string'){if(mediaKey(key))addCandidate(candidates,value,guessKindFromUrl(value,'image'));return}if(!value||typeof value!=='object'||seen.has(value))return;seen.add(value);if(Array.isArray(value)){value.forEach(item=>walkMedia(item,key,seen));return}for(const [childKey,child] of Object.entries(value))walkMedia(child,childKey,seen)};
+    walkMedia(p);
+    for(const style of [node.style,node.responsive?.desktop,node.responsive?.tablet,node.responsive?.mobile])for(const value of Object.values(style||{}))for(const url of extractCssUrls(value))addCandidate(candidates,url,guessKindFromUrl(url,'image'));
+  };
+  for(const page of project.pages||[])walkNodes(page.nodes,visitNode);
+  const cms=project.cms;
+  const scanCms=value=>{if(!value||typeof value!=='object')return;if(Array.isArray(value)){value.forEach(scanCms);return}for(const [key,child] of Object.entries(value)){if(typeof child==='string'&&['image','src','poster','cover','thumbnail'].includes(key.toLowerCase()))addCandidate(candidates,child,'image');else scanCms(child)}};
+  scanCms(cms);
+  if(project.site?.favicon)addCandidate(candidates,project.site.favicon,'image');
+  for(const style of [project.theme,project.styleLibrary]){const scan=value=>{if(!value||typeof value!=='object')return;for(const [key,child] of Object.entries(value)){if(typeof child==='string'){for(const url of extractCssUrls(child))addCandidate(candidates,url,guessKindFromUrl(url,'image'))}else scan(child)}};scan(style)}
+  return candidates;
+}
+async function fetchCandidate(entry){
+  const failures=[];const controller=typeof AbortController!=='undefined'?new AbortController():null;const timer=controller?setTimeout(()=>controller.abort(),9000):null;
+  try{
+    const response=await fetch(entry.url,{mode:'cors',credentials:'omit',cache:'force-cache',signal:controller?.signal});
+    if(!response.ok)throw new Error(`HTTP ${response.status}`);
+    if(response.type==='opaque')throw new Error('المصدر لا يسمح بالتنزيل عبر CORS');
+    const mime=(response.headers.get('content-type')||'').split(';')[0].trim().toLowerCase();
+    const expected=[...entry.kinds];const inferred=guessKindFromUrl(entry.url,'');
+    const compatible=(kind)=>kind==='image'?mime.startsWith('image/'):kind==='video'?mime.startsWith('video/'):kind==='audio'?mime.startsWith('audio/'):kind==='font'?mime.startsWith('font/')||/woff|octet-stream/.test(mime):kind==='document'?(/pdf|text\/|zip|officedocument|octet-stream/.test(mime)):true;
+    if(expected.some(kind=>!compatible(kind))&&mime&&!/octet-stream/.test(mime))throw new Error(`نوع محتوى غير متوقع: ${mime}`);
+    const declared=Number(response.headers.get('content-length')||0);if(declared>12*1024*1024)throw new Error('حجم الملف أكبر من حد التضمين 12MB');
+    const buffer=await response.arrayBuffer();if(buffer.byteLength>12*1024*1024)throw new Error('حجم الملف أكبر من حد التضمين 12MB');
+    const bytes=new Uint8Array(buffer);const path=entry.preferredPath||mediaPath(entry.url,mime,inferred||expected[0]||'image');
+    return {url:entry.url,path,bytes,mime,assetIds:entry.assetIds,ok:true};
+  }catch(error){return {url:entry.url,assetIds:entry.assetIds,ok:false,reason:error?.name==='AbortError'?'انتهت مهلة الاتصال':String(error?.message||'تعذر تنزيل الملف')}}finally{if(timer)clearTimeout(timer)}
+}
+async function collectExportResources(project){
+  const candidates=collectMediaCandidates(project);const entries=[...candidates.values()];const results=[];let next=0;
+  const workers=Array.from({length:Math.min(4,entries.length)},async()=>{while(next<entries.length){const entry=entries[next++];results.push(await fetchCandidate(entry))}});await Promise.all(workers);
+  const byUrl=new Map(),byAssetId=new Map(),external=[];let total=0;
+  for(const item of results){if(!item.ok){external.push(item);continue}total+=item.bytes.length;if(total>80*1024*1024){external.push({...item,ok:false,reason:'تجاوز مجموع الوسائط حد التضمين 80MB'});total-=item.bytes.length;continue}byUrl.set(item.url,{path:item.path,bytes:item.bytes,mime:item.mime});for(const id of item.assetIds||[])byAssetId.set(id,{path:item.path,bytes:item.bytes,mime:item.mime})}
+  for(const asset of normalizeAssets(project.assets)){
+    const bytes=assetBytes(asset.data);if(!bytes)continue;
+    const path=assetPathMap(project.assets).get(asset.id)||`assets/${safeAssetFilename(asset.filename||asset.name+'.bin')}`;
+    if(/^https?:/i.test(asset.url||''))byUrl.set(asset.url,{path,bytes,mime:asset.type});
+    if(/^https?:/i.test(asset.data||''))byUrl.set(asset.data,{path,bytes,mime:asset.type});
+  }
+  const resourceMap=new Map([...byUrl.entries()].map(([url,item])=>[url,item.path]));
+  return {byUrl,byAssetId,resourceMap,external};
+}
+function walk(nodes,fn){(nodes||[]).forEach(node=>{fn(node);walk(node.children,fn)})}
+function responsiveCss(project){
+  const rules=[];
+  const sizes={tablet:{query:'@media (max-width: 900px)',width:768},mobile:{query:'@media (max-width: 640px)',width:390}};
+  const important=css=>String(css||'').split(';').map(part=>part.trim()).filter(Boolean).map(part=>{const i=part.indexOf(':');return i<0?part:`${part.slice(0,i+1)}${part.slice(i+1)} !important`}).join(';');
+  const cssEscape=id=>String(id).replace(/"/g,'\\"');
+  for(const page of project.pages||[])walk(page.nodes,node=>{
+    for(const device of ['tablet','mobile']){
+      const cfg=sizes[device],selector=`[data-runtime-id="${cssEscape(node.id)}"]`;
+      const deviceStyle=resolveStyle(node,device,project.theme,project.styleLibrary,project);
+      const css=important(styleObjectToCss(deviceStyle));
+      const ownPatch=node.responsive?.[device]||{};
+      const declarations=[];
+      if(css)declarations.push(css);
+      if(node.visibility?.[device]===false)declarations.push('display:none!important');
+      const rawWidth=deviceStyle.width;
+      const widthText=typeof rawWidth==='number'?`${rawWidth}px`:String(rawWidth??'');
+      const widthMatch=widthText.match(/^\s*(\d+(?:\.\d+)?)px\s*$/i);
+      if(!Object.prototype.hasOwnProperty.call(ownPatch,'width')&&widthMatch&&Number(widthMatch[1])>cfg.width){declarations.push('width:100%!important','max-width:100%!important','box-sizing:border-box!important');}
+      const rawPosition=node.editorPosition&&typeof node.editorPosition==='object'?node.editorPosition:{};
+      const pos=rawPosition[device]&&typeof rawPosition[device]==='object'?rawPosition[device]:{};
+      const px=Number.isFinite(Number(pos.x))?Math.max(-50000,Math.min(50000,Number(pos.x))):0;
+      const py=Number.isFinite(Number(pos.y))?Math.max(-50000,Math.min(50000,Number(pos.y))):0;
+      declarations.push(`transform:translate3d(${px}px, ${py}px, 0)!important`);
+      if(declarations.length)rules.push(`${cfg.query}{${selector}{${declarations.join(';')}}}`);
+    }
+  });
+  return rules.join('');
+}
+function buildExportFiles(project,resources={}){
+  const map=pageFileMap(project);const assetMap=assetFileMap(project,resources);const resourceMap=resources.resourceMap instanceof Map?resources.resourceMap:new Map();
+  const primary=project.theme?.primary||'#5b5ce2';const favicon=resourceMap.get(project.site?.favicon)||project.site?.favicon;
+  const manifest={name:project.site?.title||project.meta.name,short_name:project.meta.name,start_url:map.get(project.pages?.[0]?.id)||'index.html',display:'standalone',background_color:project.theme?.surface||'#fff',theme_color:primary,lang:project.site?.language||'ar',dir:project.site?.direction||'rtl',icons:favicon?[{src:favicon,sizes:'any',type:'image/png'}]:[]};
+  const externalList=(resources.external||[]).filter(item=>item?.url).map(item=>`- ${item.url}\n  - السبب: ${item.reason||'المصدر لم يسمح بالتضمين'}`);
+  const files={
+    'index.html':null,
+    'styles.css':stylesheet(project.theme,project,resourceMap),
+    'script.js':runtimeJs(project,map,assetMap,resourceMap),
+    'project.json':JSON.stringify(deepClone(project),null,2),
+    'site.json':JSON.stringify({site:project.site,navigation:project.navigation,release:project.release},null,2),
+    'manifest.webmanifest':JSON.stringify(manifest,null,2),
+    'robots.txt':robotsTxt(project),'sitemap.xml':sitemapXml(project,map),'404.html':null,
+    'EXTERNAL_RESOURCES.md':externalList.length?`# وسائط خارجية لم يمكن تضمينها
+
+بقيت هذه العناوين كما هي في الموقع لأن المصدر منع التنزيل أو فشل الاتصال. تحتاج إلى إنترنت كي تعمل.
+
+${externalList.join('\n')}`:'# لا توجد وسائط خارجية فشل تضمينها في وقت التصدير. روابط التنقل الخارجية تظل روابط كما هي.',
+    'README.md':`# ${project.meta.name}
+
+موقع متعدد الصفحات مُنشأ بواسطة بَنّاء Bunaa Studio V35.
+
+## التشغيل
+افتح index.html في المتصفح أو ارفع كل ملفات هذه الحزمة إلى استضافة موقع ثابتة مع الحفاظ على بنية المجلدات.
+
+## محتويات الحزمة
+- ملفات HTML لجميع الصفحات وروابط محلية فيما بينها.
+- styles.css وscript.js للتنسيق والتفاعلات.
+- مجلد assets للوسائط التي أمكن تضمينها.
+- بيانات المشروع وSEO وmanifest وrobots وsitemap.
+- EXTERNAL_RESOURCES.md يوضح أي وسائط تعذر تنزيلها.
+
+الروابط الخارجية التي تقود إلى مواقع أخرى تبقى روابط ويب مقصودة ولا يتم تنزيل مواقع الطرف الثالث بأكملها. أما الصور والفيديو والصوت والخطوط والملفات المشار إليها في عناصر الموقع أو CSS فتُضمَّن داخل assets إذا كان الخادم يسمح بجلبها عبر CORS وحجمها ضمن حدود التضمين. إذا منع الخادم ذلك، فسيظل الرابط الأصلي ظاهرًا في EXTERNAL_RESOURCES.md. الصور المحلية/data URI وملفات المشروع المرفوعة تُحفظ في الحزمة.`
+  };
+  for(const page of project.pages||[])files[map.get(page.id)]=null;
+  for(const asset of normalizeAssets(project.assets||[])){
+    const path=assetMap.get(asset.id);if(!path)continue;
+    const data=resources.byAssetId?.get?.(asset.id)?.bytes||assetBytes(asset.data);if(data)files[path]=data;
+  }
+  for(const [url,entry] of resources.byUrl||[]){if(entry?.path&&entry?.bytes)files[entry.path]=entry.bytes}
+  return {map,assetMap,resourceMap,files};
+}
+
+function robotsTxt(project){const policy=project.site?.indexing?.robots||'index,follow';const disallow=policy.includes('noindex')?'/':'';const lines=['User-agent: *',`Disallow: ${disallow}`];if(project.site?.baseUrl&&project.site?.indexing?.sitemap!==false)lines.push(`Sitemap: ${project.site.baseUrl.replace(/\/$/,'')}/sitemap.xml`);return lines.join('\n')}
+function sitemapXml(project,map){const base=String(project.site?.baseUrl||'').replace(/\/$/,'');const urls=(project.pages||[]).filter(p=>!p.settings?.hidden&&!p.seo?.noIndex).map(page=>{const file=map.get(page.id)||'index.html';const loc=base?`${base}/${file}`.replace(/\/index\.html$/,'/'):file;return `<url><loc>${escapeXml(loc)}</loc></url>`}).join('');return `<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${urls}</urlset>`}
+function escapeXml(value){return String(value??'').replace(/[<>&"']/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&apos;'}[c]))}
+function buildPageHtml(page,project,map=pageFileMap(project),assetMap=assetFileMap(project),resourceMap=new Map()){
+  const body=(page.nodes||[]).map(node=>nodeHtml(node,project.theme,project,'desktop',map,assetMap,resourceMap)).join('');
+  const menu=project.navigation?.menus?.find(m=>m.id===project.navigation?.headerMenuId);
+  const items=menu?.items?.length?menu.items:(project.pages||[]).filter(p=>p.settings?.showInNav!==false&&!p.settings?.hidden).map(p=>({label:p.name,type:'page',targetId:p.id}));
+  const nav=items.map(item=>{const target=project.pages.find(p=>p.id===item.targetId);const href=item.type==='url'?safeUrl(item.url||'#'):(target?map.get(target.id):'#');return `<a href="${escapeHtml(href||'#')}"${item.newTab?' target="_blank" rel="noopener noreferrer"':''}>${escapeHtml(item.label||target?.name||'رابط')}</a>`}).join('');
+  const site=project.site||{};const noindex=page.seo?.noIndex||site.indexing?.robots?.includes('noindex');
+  const canonical=page.seo?.canonical||((site.baseUrl&&page===project.pages[0])?site.baseUrl:`${String(site.baseUrl||'').replace(/\/$/,'')}/${page.slug||''}`);
+  const faviconRaw=site.favicon||'';const faviconUrl=resourceMap.get(faviconRaw)||faviconRaw;const favicon=faviconUrl?`<link rel="icon" href="${escapeHtml(faviconUrl)}">`:'';
+  return `<!doctype html><html lang="${escapeHtml(site.language||'ar')}" dir="${escapeHtml(site.direction||'rtl')}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="${escapeHtml(page.seo?.description||site.description||'')}">${noindex?'<meta name="robots" content="noindex,nofollow">':''}${canonical?`<link rel="canonical" href="${escapeHtml(canonical)}">`:''}<meta property="og:title" content="${escapeHtml(page.seo?.title||page.name)}"><meta property="og:description" content="${escapeHtml(page.seo?.description||site.description||'')}">${favicon}<meta name="generator" content="Bunaa Studio V35"><link rel="manifest" href="manifest.webmanifest"><link rel="stylesheet" href="styles.css"><title>${escapeHtml(page.seo?.title||page.name)}</title></head><body><header class="export-site-nav"><strong>${escapeHtml(site.brand?.name||project.meta.name)}</strong><nav>${nav}</nav></header><main data-page-id="${escapeHtml(page.id)}">${body}</main><script src="script.js">\u003c/script></body></html>`;
+}
+function runtimeJs(project,map=pageFileMap(project),assetMap=assetFileMap(project),resourceMap=new Map()){
+  const interactions=(project.interactions||[]).filter(i=>i.enabled!==false).map(i=>({
+    ...i,steps:Array.isArray(i.steps)&&i.steps.length?i.steps:[{action:i.action||'motion',options:i.options||{},delay:0}]
+  }));
+  const pages=project.pages.map(p=>({id:p.id,file:map.get(p.id)||''}));
+  return `(()=>{'use strict';
+const interactions=${JSON.stringify(interactions)};
+const assets=${JSON.stringify(normalizeAssets(project.assets).map(a=>({id:a.id,url:assetMap.get(a.id)||resourceMap.get(a.url)||a.url||a.data||'',filename:a.filename,name:a.name,kind:a.kind}))).replace(/<\/script/gi,'<\\/script')};
+const pages=${JSON.stringify(pages)};
+const assetById=id=>assets.find(a=>a.id===String(id||''))||null;
+const findNode=id=>Array.from(document.querySelectorAll('[data-runtime-id]')).find(n=>n.dataset.runtimeId===String(id||''))||null;
+const eventTarget=(source,type)=>['input','change','focus','blur','keydown','submit'].includes(type)?(source.querySelector('input,textarea,select,button,form')||source):(['play','pause','ended'].includes(type)?(source.querySelector('audio,video')||source):source);
+const visible=el=>{if(!el)return false;const cs=getComputedStyle(el);return !el.hidden&&cs.display!=='none'&&cs.visibility!=='hidden'};
+const motion=(el,name='fade',duration=420)=>{if(!el)return;const names=new Set(['fade','slide','zoom','pulse','glow','lift','shake','bounce','spin']);const safe=names.has(name)?name:'fade';el.classList.remove(...Array.from(el.classList).filter(x=>x.startsWith('motion-')));void el.offsetWidth;el.style.animationDuration=Math.max(0,Math.min(10000,Number(duration)||420))+'ms';el.classList.add('motion-'+safe);el.addEventListener('animationend',()=>{el.classList.remove('motion-'+safe);el.style.animationDuration='';},{once:true})};
+const toast=(message,duration=2200)=>{document.querySelector('[data-bunaa-toast]')?.remove();const el=document.createElement('div');el.dataset.bunaaToast='1';el.textContent=String(message||'تم التنفيذ');el.style.cssText='position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:2147483000;padding:11px 16px;border-radius:12px;background:#171b2a;color:#fff;font:700 13px system-ui;box-shadow:0 16px 40px rgba(0,0,0,.2)';document.body.appendChild(el);setTimeout(()=>el.remove(),Math.max(400,Number(duration)||2200))};
+const valueOf=(target,event)=>{const f=event?.target?.matches?.('input,textarea,select')?event.target:target?.querySelector?.('input,textarea,select');if(f){if(f.type==='checkbox'||f.type==='radio')return f.checked?'true':'false';return String(f.value??'')}return String(target?.textContent||'').trim()};
+const condition=(i,event,source)=>{const c=i.condition||{type:'always'};if(c.type==='always')return true;const actual=valueOf(source,event);if(c.type==='not-empty')return actual.trim()!=='';if(c.type==='visible')return visible(source);if(c.type==='value'){const v=String(c.value??'');if(c.operator==='equals')return actual===v;if(c.operator==='not-equals')return actual!==v;if(c.operator==='starts')return actual.startsWith(v);if(c.operator==='ends')return actual.endsWith(v);return actual.includes(v)}if(c.type==='key')return String(event?.key||'')===String(c.value||'');return true};
+const run=async(item,event,source)=>{if(!condition(item,event,source))return;for(const step of item.steps||[]){const o=step.options||{};if(step.delay)await new Promise(r=>setTimeout(r,Math.min(10000,Number(step.delay)||0)));const target=findNode(o.targetId)||source;switch(step.action){case'motion':motion(target,o.motion,o.duration);break;case'show':target.hidden=false;break;case'hide':target.hidden=true;break;case'toggle':target.hidden=!target.hidden;break;case'scroll':target.scrollIntoView?.({behavior:'smooth',block:'center'});break;case'page':{const p=pages.find(x=>x.id===o.pageId);if(p)location.href=p.file;break}case'url':{const u=String(o.url||'');if(/^(https?:|mailto:|tel:)/i.test(u)){if(o.newTab)window.open(u,'_blank','noopener');else location.href=u}break}case'addClass':if(o.className)target.classList.add(o.className);break;case'removeClass':if(o.className)target.classList.remove(o.className);break;case'toggleClass':if(o.className)target.classList.toggle(o.className);break;case'style':if(o.property&&/^[a-zA-Z-]+$/.test(o.property))target.style.setProperty(o.property,String(o.value??''));break;case'setText':target.textContent=String(o.text??'');break;case'setAttribute':if(o.attribute)target.setAttribute(String(o.attribute),String(o.attributeValue??''));break;case'removeAttribute':if(o.attribute)target.removeAttribute(String(o.attribute));break;case'toggleAttribute':if(o.attribute)target.toggleAttribute(String(o.attribute));break;case'focus':target.focus?.();break;case'blur':target.blur?.();break;case'submit':{const form=target.tagName==='FORM'?target:(target.closest?.('form')||target.querySelector?.('form'));if(form?.requestSubmit)form.requestSubmit();else form?.submit?.();break}case'toast':toast(o.message,o.toastDuration);break;case'copy':{try{await navigator.clipboard.writeText(String(o.text||valueOf(target,event)));toast('تم النسخ')}catch{}}break;case'mediaPlay':{const m=target.querySelector?.('audio,video')||target;m.play?.().catch?.(()=>{});break}case'mediaPause':{const m=target.querySelector?.('audio,video')||target;m.pause?.();break}case'openAsset':{const a=assetById(o.assetId);if(a?.url)window.open(a.url,'_blank','noopener');break}case'downloadAsset':{const a=assetById(o.assetId);if(a?.url){const link=document.createElement('a');link.href=a.url;link.download=a.filename||a.name||'download';document.body.appendChild(link);link.click();link.remove()}break}case'setMedia':{const a=assetById(o.assetId);if(!a?.url)break;target.querySelector?.('img')?.setAttribute('src',a.url);target.querySelector?.('video')?.setAttribute('src',a.url);target.querySelector?.('audio')?.setAttribute('src',a.url);break}}}};
+const fired=new WeakMap();const now=()=>Date.now();
+const fire=(item,event,source)=>{const prev=fired.get(source)||{};const t=now();if(item.once&&prev[item.id]?.fired)return;if(item.cooldown&&prev[item.id]&&t-prev[item.id].last<item.cooldown)return;fired.set(source,{...prev,[item.id]:{last:t,fired:true}});if(item.preventDefault)event?.preventDefault?.();if(item.stopPropagation)event?.stopPropagation?.();run(item,event,source).catch(()=>{})};
+interactions.forEach(item=>{const source=findNode(item.sourceId);if(!source)return;const target=eventTarget(source,item.trigger);if(item.trigger==='load'){setTimeout(()=>fire(item,{currentTarget:source},source),60);return}if(item.trigger==='enterViewport'&&'IntersectionObserver'in globalThis){new IntersectionObserver(es=>{if(es.some(e=>e.isIntersecting))fire(item,{currentTarget:source},source)},{threshold:.15}).observe(source);return}if(item.trigger==='scroll'){window.addEventListener('scroll',()=>{if(visible(source))fire(item,{currentTarget:source},source)},{passive:true});return}target.addEventListener(item.trigger==='hover'?'pointerenter':item.trigger==='hoverleave'?'pointerleave':item.trigger,e=>{const takesNavigation=(item.steps||[]).some(step=>['page','url'].includes(step.action));if(['click','dblclick','contextmenu'].includes(item.trigger)&&((target.tagName==='A'&&item.trigger==='click')||takesNavigation))e.preventDefault();fire(item,e,source)});});
+let cartCount=0;const feedback=(message)=>{let toastNode=document.querySelector('[data-bunaa-cart-status]');if(!toastNode){toastNode=document.createElement('div');toastNode.dataset.bunaaCartStatus='1';toastNode.setAttribute('role','status');toastNode.setAttribute('aria-live','polite');toastNode.style.cssText='position:fixed;bottom:18px;inset-inline-end:18px;z-index:9999;padding:10px 14px;border-radius:10px;background:#171b2a;color:#fff;font:600 13px system-ui;box-shadow:0 12px 28px rgba(0,0,0,.2)';document.body.appendChild(toastNode)}toastNode.textContent=message};
+document.addEventListener('click',event=>{const filter=event.target.closest('[data-portfolio-filter]');if(filter){event.preventDefault();const host=filter.closest('.built-portfolio');if(!host)return;const wanted=filter.dataset.portfolioFilter||'الكل';host.querySelectorAll('[data-portfolio-filter]').forEach(b=>b.setAttribute('aria-pressed',b===filter?'true':'false'));host.querySelectorAll('[data-portfolio-category]').forEach(card=>{card.hidden=wanted!=='الكل'&&card.dataset.portfolioCategory!==wanted});return}const move=event.target.closest('[data-carousel-move]');if(move){event.preventDefault();const host=move.closest('.built-testimonial-carousel');if(!host)return;const slides=[...host.querySelectorAll('[data-carousel-slide]')];if(!slides.length)return;let index=slides.findIndex(slide=>!slide.hidden);index=(index+Number(move.dataset.carouselMove||0)+slides.length)%slides.length;slides.forEach((slide,i)=>slide.hidden=i!==index);const status=host.querySelector('[data-carousel-status]');if(status)status.textContent=String(index+1)+' / '+String(slides.length);return}const tab=event.target.closest('[data-tab-index]');if(tab){const host=tab.closest('.built-tabs');if(!host)return;host.querySelectorAll('[data-tab-index]').forEach(button=>button.classList.toggle('active',button===tab));host.querySelectorAll('[data-tab-panel]').forEach(panel=>panel.hidden=panel.dataset.tabPanel!==tab.dataset.tabIndex);return}const add=event.target.closest('[data-cart-add]');if(add){event.preventDefault();cartCount+=1;window.__BUNAA_CART={count:cartCount,items:[...(window.__BUNAA_CART?.items||[]),{id:add.dataset.cartAdd,name:add.dataset.cartName}]};add.textContent='أضيفت ✓';add.setAttribute('aria-pressed','true');feedback('أضيف إلى السلة: '+(add.dataset.cartName||'منتج')+' — العدد '+cartCount);return}const back=event.target.closest('[data-back-to-top]');if(back){event.preventDefault();window.scrollTo({top:0,behavior:'smooth'});return}const cookie=event.target.closest('[data-cookie-dismiss]');if(cookie){event.preventDefault();cookie.closest('.built-cookie')?.remove();try{localStorage.setItem('bunaa-cookie-consent','accepted')}catch{}return}});
+document.addEventListener('submit',event=>{const form=event.target.closest('form[data-local-contact-form]');if(!form)return;event.preventDefault();const status=form.querySelector('[data-form-status]');if(!form.checkValidity()){form.reportValidity?.();if(status)status.textContent='راجع الحقول المطلوبة والبريد الإلكتروني.';return}if(status)status.textContent='تم التحقق من الحقول محليًا. لإرسال البيانات فعليًا إلى بريد أو CRM، اربط النموذج بخدمة إرسال أو بخادم.';form.dataset.validated='true';feedback('تم التحقق من النموذج. لم يتم إرسال بيانات إلى خادم.');});
+})();`;}
+function stylesheet(theme={},project={},resourceMap=new Map()){const primary=theme.primary||'#5b5ce2',text=theme.text||'#171b2a';const css=`*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;font-family:${theme.font||'system-ui'},-apple-system,"Segoe UI",Tahoma,Arial,sans-serif;color:${text};line-height:1.6;background:${theme.surface||'#fff'};${themeCss(theme)}}main{width:100%;margin:0 auto}.export-site-nav{position:sticky;top:0;z-index:20;width:100%;display:flex;gap:20px;align-items:center;justify-content:space-between;padding:14px 22px;border-bottom:1px solid var(--b-line);background:color-mix(in srgb,var(--b-surface,#fff) 92%,transparent);backdrop-filter:blur(12px)}.export-site-nav nav{display:flex;gap:14px;flex-wrap:wrap}.export-site-nav a{color:var(--b-primary,${primary});text-decoration:none}.node-wrap{display:block;width:100%}.built-button{display:inline-flex;padding:11px 20px;background:var(--b-primary,${primary});color:#fff;border-radius:11px;text-decoration:none;font-weight:800}.built-card,.built-product,.built-testimonial{padding:18px;border:1px solid var(--b-line,#e7e9ef);border-radius:14px;background:var(--b-surface,#fff);box-shadow:var(--b-shadowSoft,none)}.built-nav{display:flex;justify-content:space-between;align-items:center;gap:16px}.nav-links,.built-social{display:flex;gap:16px;flex-wrap:wrap}.built-nav a,.built-social a{color:var(--b-primary,${primary});text-decoration:none}.built-gallery{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.built-gallery img{width:100%;height:220px;object-fit:cover;border-radius:12px}.built-stats,.built-pricing,.built-timeline{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.built-stats>div,.built-pricing>div,.built-timeline>div{padding:16px;border:1px solid var(--b-line,#e7e9ef);border-radius:12px;background:var(--b-surface,#fff)}.built-progress{height:32px;background:#eef0f5;border-radius:10px;overflow:hidden;position:relative}.built-progress>div{height:100%;background:var(--b-primary,${primary})}.motion-fade{animation:fade .7s ease}.motion-slide{animation:slide .7s ease}.motion-zoom{animation:zoom .7s ease}.motion-pulse{animation:pulse 1.1s ease}.motion-glow{animation:glow .9s ease}.motion-lift{animation:lift .28s ease}.motion-shake{animation:shake .45s ease}.motion-bounce{animation:bounce .6s ease}.motion-spin{animation:spin .65s ease}@keyframes fade{from{opacity:.2}to{opacity:1}}@keyframes slide{from{transform:translateY(14px);opacity:.2}to{transform:translateY(0);opacity:1}}@keyframes zoom{from{transform:scale(.96);opacity:.2}to{transform:scale(1);opacity:1}}@keyframes pulse{50%{transform:scale(1.03)}}@keyframes glow{50%{box-shadow:0 0 0 6px rgba(91,92,226,.13)}}@keyframes lift{from{transform:translateY(0)}50%{transform:translateY(-6px)}to{transform:translateY(0)}}@keyframes shake{20%{transform:translateX(-4px)}40%{transform:translateX(4px)}60%{transform:translateX(-3px)}80%{transform:translateX(3px)}}@keyframes bounce{0%,100%{transform:translateY(0)}50%{transform:translateY(-9px)}}@keyframes spin{to{transform:rotate(360deg)}} .built-hero-split{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);align-items:center;gap:28px;padding:clamp(18px,4vw,48px);border-radius:18px}.built-hero-copy h1{font-size:clamp(30px,4vw,54px);line-height:1.12}.built-hero-media{min-height:220px;aspect-ratio:4/3;overflow:hidden;border-radius:15px}.built-hero-media img,.built-content-card>img,.built-product-listing>img,.built-portfolio-item img{display:block;width:100%;height:100%;object-fit:cover}.built-blog-grid,.built-product-grid,.built-portfolio-grid,.built-process-steps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}.built-content-card,.built-product-listing,.built-process-steps li{min-width:0;overflow:hidden;border:1px solid var(--b-line,#e7e9ef);border-radius:14px;background:var(--b-surface,#fff)}.built-content-card>img,.built-product-listing>img{aspect-ratio:16/10;height:auto}.built-content-card-body,.built-product-actions{padding:14px;display:grid;gap:9px}.built-product-listing{display:flex;flex-direction:column;gap:8px;padding-bottom:12px}.built-product-listing>h3,.built-product-listing>p,.built-product-listing>strong,.built-product-listing>small{margin-inline:12px}.built-product-actions{grid-template-columns:1fr 1fr}.built-cart-add,.built-portfolio-filters button,.built-carousel-controls button{border:1px solid var(--b-line,#e7e9ef);border-radius:9px;padding:9px;background:#fff;cursor:pointer}.built-portfolio,.built-contact-form,.built-newsletter,.built-lead-form,.built-faq-list,.built-testimonial-carousel{display:grid;gap:12px}.built-portfolio-filters{display:flex;flex-wrap:wrap;gap:8px}.built-portfolio-filters button[aria-pressed=true]{background:var(--b-primary,#5b5ce2);color:#fff}.built-portfolio-item{min-width:0;position:relative;aspect-ratio:4/3;overflow:hidden;border-radius:12px;color:inherit;text-decoration:none}.built-portfolio-item[hidden],.built-testimonial-slide[hidden],.built-tabs [data-tab-panel][hidden]{display:none!important}.built-portfolio-item>span{position:absolute;inset-inline:8px;bottom:8px;padding:9px;border-radius:8px;background:#ffffffed;color:#171b2a;display:grid}.built-testimonial-slide{margin:0;padding:24px;border:1px solid var(--b-line,#e7e9ef);border-radius:14px}.built-carousel-controls{display:flex;justify-content:center;align-items:center;gap:14px}.built-contact-form input,.built-contact-form textarea,.built-newsletter input,.built-lead-form input{width:100%;max-width:100%;padding:11px;border:1px solid var(--b-line,#e7e9ef);border-radius:9px;font:inherit}.built-contact-form form,.built-newsletter form,.built-lead-form form{display:grid;gap:10px}.built-form-status{margin:0;padding:8px;border-radius:8px}.built-process-steps{list-style:none;padding:0}.built-process-steps li{padding:18px;display:grid;gap:8px}.built-trust-bar{display:grid;gap:12px;text-align:center}.built-trust-logos{display:flex;justify-content:space-evenly;flex-wrap:wrap;gap:16px}.built-faq-list details{padding:14px;border:1px solid var(--b-line,#e7e9ef);border-radius:10px}.built-faq-list summary{font-weight:800;cursor:pointer}.built-tabs [data-tab-index]{padding:8px 12px;border:1px solid var(--b-line,#e7e9ef);border-radius:8px;background:#fff;cursor:pointer}.built-tabs [data-tab-index].active{background:var(--b-primary,#5b5ce2);color:#fff}.built-tabs [data-tab-panel]{padding:12px}.node-wrap[data-explicit-size="1"]{max-width:none!important}@media(max-width:760px){.built-hero-split{grid-template-columns:1fr!important}.built-blog-grid,.built-product-grid,.built-portfolio-grid,.built-process-steps{grid-template-columns:1fr!important}.built-hero-media{min-height:180px}.built-product-actions{grid-template-columns:1fr 1fr}} 
+.built-team-items,.built-service-items,.built-bento-items,.built-review-items{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}.built-team-card,.built-service-card,.built-bento-card,.built-review-card{min-width:0;overflow:hidden;padding:18px;border:1px solid var(--line,#e5e8ef);border-radius:15px;background:var(--surface,#fff);box-shadow:0 8px 24px rgba(22,28,50,.05)}.built-team-card>img,.built-bento-card>img{display:block;width:100%;height:auto;aspect-ratio:4/3;object-fit:cover;border-radius:10px;margin-bottom:12px}.built-team-card h3,.built-service-card h3,.built-bento-card h3{margin:5px 0}.built-team-card small,.built-event-card small,.built-job-card small{color:var(--muted,#737b8e)}.built-service-card>span{display:grid;place-items:center;width:42px;height:42px;border-radius:12px;background:color-mix(in srgb,var(--primary,#5b5ce2) 12%,white);color:var(--primary,#5b5ce2);font-size:23px}.built-service-card>a,.built-bento-card>a{display:inline-flex;margin-top:12px;color:var(--primary,#5b5ce2);font-weight:800;text-decoration:none}.built-bento-card:nth-child(1){grid-column:span 2}.built-bento-card:nth-child(1)>img{aspect-ratio:16/7}.built-logo-cloud-items{display:flex;align-items:center;justify-content:space-evenly;flex-wrap:wrap;gap:18px}.built-logo-cloud-item{display:grid;place-items:center;min-width:90px;min-height:48px;padding:10px 16px;color:var(--muted,#737b8e);font-weight:900;text-decoration:none}.built-logo-cloud-item img{display:block;max-width:140px;width:auto;height:auto;max-height:48px;object-fit:contain}.built-event-list,.built-job-board{display:grid;gap:12px}.built-event-card,.built-job-card{display:grid;grid-template-columns:minmax(100px,140px) minmax(0,1fr) auto;align-items:center;gap:16px;padding:18px;border:1px solid var(--line,#e5e8ef);border-radius:14px;background:var(--surface,#fff)}.built-event-card h3,.built-job-card h3{margin:0 0 4px}.built-event-card p,.built-job-card p{margin:4px 0}.built-event-date{padding:10px;border-radius:10px;background:color-mix(in srgb,var(--primary,#5b5ce2) 9%,white);color:var(--primary,#5b5ce2);text-align:center}.built-review-card{margin:0;display:grid;align-content:start;gap:8px}.built-review-card>div{color:#e5a11a;letter-spacing:2px}.built-review-card p{margin:0;line-height:1.8}.built-review-card small{color:var(--muted,#737b8e)}
+@media(max-width:760px){.built-team-items,.built-service-items,.built-bento-items,.built-review-items{grid-template-columns:minmax(0,1fr)}.built-bento-card:nth-child(1){grid-column:auto}.built-bento-card:nth-child(1)>img{aspect-ratio:4/3}.built-event-card,.built-job-card{grid-template-columns:minmax(0,1fr);align-items:stretch}.built-event-date{text-align:start}.built-logo-cloud-items{justify-content:center}}
+${responsiveCss(project)}@media(max-width:760px){.built-gallery,.built-stats,.built-pricing,.built-timeline,.built-blog-grid,.built-product-grid,.built-portfolio-grid,.built-process-steps{grid-template-columns:1fr}.built-nav,.export-site-nav{align-items:flex-start;flex-direction:column}}`;return String(css).replace(/url\(\s*(['\"]?)(.*?)\1\s*\)/gi,(whole,quote,raw)=>{const key=String(raw||'').trim();const local=resourceMap?.get?.(key);return `url(\"${String(local||key).replace(/\"/g,'%22')}\")`})}
+function exportZip(project){return collectExportResources(project).then(resources=>{const {map,assetMap,resourceMap,files}=buildExportFiles(project,resources);for(const page of project.pages)files[map.get(page.id)]=buildPageHtml(page,project,map,assetMap,resourceMap);files['404.html']=build404Html(project,map);const names=Object.keys(files);downloadBlob(zipBlob(files),`${safeName(project.meta.name)}-complete-site.zip`);names.externalResources=resources.external||[];names.pageCount=(project.pages||[]).length;return names;});}
+function bytesToDataUrl(bytes,mime='application/octet-stream'){
+  if(!bytes)return '';
+  let binary='';const chunk=0x8000;for(let i=0;i<bytes.length;i+=chunk)binary+=String.fromCharCode(...bytes.subarray(i,Math.min(bytes.length,i+chunk)));
+  return `data:${mime||'application/octet-stream'};base64,${btoa(binary)}`;
+}
+function inlineExportMaps(project,resources={}){
+  const resourceMap=new Map();
+  for(const [url,entry] of resources.byUrl||[]){if(entry?.bytes)resourceMap.set(url,bytesToDataUrl(entry.bytes,entry.mime||'application/octet-stream'));}
+  const assetMap=new Map();
+  for(const asset of normalizeAssets(project.assets||[])){
+    const raw=String(asset.data||'');
+    if(/^data:/i.test(raw)){assetMap.set(asset.id,raw);if(asset.url)resourceMap.set(asset.url,raw);continue;}
+    const fetched=resources.byAssetId?.get?.(asset.id)||resources.byUrl?.get?.(asset.url)||resources.byUrl?.get?.(raw);
+    if(fetched?.bytes){const data=bytesToDataUrl(fetched.bytes,fetched.mime||asset.type||'application/octet-stream');assetMap.set(asset.id,data);if(asset.url)resourceMap.set(asset.url,data);if(raw)resourceMap.set(raw,data);continue;}
+    const mapped=resourceMap.get(raw)||resourceMap.get(asset.url)||raw||asset.url||'';
+    if(mapped)assetMap.set(asset.id,mapped);
+    if(/^data:/i.test(mapped)){if(asset.url)resourceMap.set(asset.url,mapped);if(raw)resourceMap.set(raw,mapped);}
+  }
+  return {assetMap,resourceMap};
+}
+function buildSingleFileHtml(project,selectedPageId,resources={}){
+  const pages=project.pages||[];if(!pages.length)throw new Error('لا توجد صفحات لتصديرها.');
+  const tokens=new Map(pages.map((page,index)=>[page.id,`bunaa-page-${index+1}-${hashText(page.id)}`]));
+  const pageMap=new Map(pages.map(page=>[page.id,`#${tokens.get(page.id)}`]));
+  const {assetMap,resourceMap}=inlineExportMaps(project,resources);
+  const initialPage=pages.find(page=>page.id===selectedPageId)||pages.find(page=>page.id===project.activePageId)||pages[0];
+  const sections=pages.map(page=>{
+    const id=tokens.get(page.id);
+    const body=(page.nodes||[]).map(node=>nodeHtml(node,project.theme,project,'desktop',pageMap,assetMap,resourceMap)).join('');
+    return `<section class="bunaa-single-page" id="${escapeHtml(id)}" data-bunaa-single-page="${escapeHtml(page.id)}" ${page.id===initialPage.id?'':'hidden'}><main data-page-id="${escapeHtml(page.id)}">${body}</main></section>`;
+  }).join('\n');
+  const menu=project.navigation?.menus?.find(item=>item.id===project.navigation?.headerMenuId);
+  const items=menu?.items?.length?menu.items:pages.filter(page=>page.settings?.showInNav!==false&&!page.settings?.hidden).map(page=>({label:page.name,type:'page',targetId:page.id}));
+  const nav=items.map(item=>{
+    const target=pages.find(page=>page.id===item.targetId)||pages.find(page=>page.name===item.label);
+    const href=item.type==='url'?safeUrl(item.url||'#'):(target?pageMap.get(target.id):'#');
+    return `<a href="${escapeHtml(href||'#')}"${target&&item.type!=='url'?` data-bunaa-page-link="${escapeHtml(tokens.get(target.id))}"`:''}${item.newTab?' target="_blank" rel="noopener noreferrer"':''}>${escapeHtml(item.label||target?.name||'رابط')}</a>`;
+  }).join('');
+  const titles=Object.fromEntries(pages.map(page=>[tokens.get(page.id),page.seo?.title||page.name]));
+  const tokenById=Object.fromEntries(pages.map(page=>[page.id,tokens.get(page.id)]));
+  const startToken=tokens.get(initialPage.id);
+  const theme=project.theme||{};const site=project.site||{};
+  const faviconRaw=site.favicon||'';const favicon=resourceMap.get(faviconRaw)||faviconRaw;
+  const css=stylesheet(theme,project,resourceMap)+`\nhtml,body{width:100%;max-width:100%;margin:0;padding:0;overflow-x:hidden}body[data-bunaa-single-file="1"]{min-height:100vh}.bunaa-single-page{width:100%;max-width:100%;min-height:100vh;margin:0 auto}.bunaa-single-page[hidden]{display:none!important}.bunaa-single-page>main{width:100%;max-width:none;margin:0 auto}.export-site-nav{box-sizing:border-box;max-width:100%;flex-wrap:wrap}.export-site-nav nav{min-width:0;max-width:100%;flex-wrap:wrap}img,video,iframe,audio,canvas,svg{max-width:100%}.node-wrap{min-width:0;box-sizing:border-box}.node-wrap[data-explicit-size="1"]{max-width:100%}`;
+  const script=runtimeJs(project,pageMap,assetMap,resourceMap)+`\n(()=>{'use strict';const titles=${JSON.stringify(titles)};const tokenById=${JSON.stringify(tokenById)};const defaultToken=${JSON.stringify(startToken)};const valid=new Set(Object.keys(titles));const pages=[...document.querySelectorAll('[data-bunaa-single-page]')];function showPage(token,updateHash=false){if(!valid.has(token))token=defaultToken;for(const page of pages)page.hidden=page.id!==token;document.title=(titles[token]||document.title)+' — '+${JSON.stringify(site.brand?.name||project.meta.name||'')};if(updateHash&&location.hash!=='#'+token)history.pushState({bunaaPage:token},'', '#'+token);window.scrollTo({top:0,behavior:'auto'});window.dispatchEvent(new CustomEvent('bunaa:pagechange',{detail:{token,pageId:pages.find(page=>page.id===token)?.dataset.bunaaSinglePage||''}}))}function routeFromHash(){showPage(decodeURIComponent(location.hash.replace(/^#/,'')),false)}document.addEventListener('click',event=>{const link=event.target.closest('a[href^="#bunaa-page-"]');if(!link)return;const token=decodeURIComponent(link.getAttribute('href').slice(1));if(!valid.has(token))return;event.preventDefault();showPage(token,true)});window.addEventListener('hashchange',routeFromHash);window.addEventListener('popstate',routeFromHash);if(!valid.has(decodeURIComponent(location.hash.replace(/^#/,''))))history.replaceState({bunaaPage:defaultToken},'', '#'+defaultToken);routeFromHash();window.__BUNAA_SINGLE_FILE_EXPORT__={pages:tokenById,showPage:(pageId)=>{const token=tokenById[pageId];if(token)showPage(token,true)}}})();`;
+  const escapedCss=css.replace(/<\/style/gi,'<\\/style');const escapedScript=script.replace(/<\/script/gi,'<\\/script');
+  return `<!doctype html><html lang="${escapeHtml(site.language||'ar')}" dir="${escapeHtml(site.direction||'rtl')}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="${escapeHtml(initialPage.seo?.description||site.description||'')}">${initialPage.seo?.noIndex||site.indexing?.robots?.includes('noindex')?'<meta name="robots" content="noindex,nofollow">':''}${favicon?`<link rel="icon" href="${escapeHtml(favicon)}">`:''}<meta name="generator" content="Bunaa Studio V35 Single-File Export"><title>${escapeHtml(initialPage.seo?.title||initialPage.name)} — ${escapeHtml(site.brand?.name||project.meta.name||'')}</title><style>${escapedCss}</style></head><body data-bunaa-single-file="1" data-default-page="${escapeHtml(initialPage.id)}"><header class="export-site-nav"><strong>${escapeHtml(site.brand?.name||project.meta.name||'الموقع')}</strong><nav>${nav}</nav></header>${sections}<script>${escapedScript}<\/script></body></html>`;
+}
+const exportCurrentHtml=async(project,selectedPageId)=>{
+  const resources=await collectExportResources(project);
+  const html=buildSingleFileHtml(project,selectedPageId,resources);
+  const page=(project.pages||[]).find(p=>p.id===(selectedPageId||project.activePageId))||(project.pages||[])[0];
+  downloadText(html,`${safeName(page?.slug||page?.name||'page')}-standalone.html`,'text/html;charset=utf-8');
+  return {page:page?.name||'',pages:(project.pages||[]).length,external:(resources.external||[])};
+};
+const exportProjectJson=project=>downloadText(JSON.stringify(project,null,2),'bunaa-project.json','application/json;charset=utf-8');
+function build404Html(project,map){return `<!doctype html><html lang="${escapeHtml(project.site?.language||'ar')}" dir="${escapeHtml(project.site?.direction||'rtl')}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><link rel="stylesheet" href="styles.css"><title>الصفحة غير موجودة</title></head><body style="min-height:100vh;display:grid;place-items:center;padding:40px"><main style="text-align:center"><h1>404</h1><p>الصفحة التي تبحث عنها غير موجودة.</p><a class="built-button" href="${escapeHtml(map.get(project.pages[0]?.id)||'index.html')}">العودة للرئيسية</a></main></body></html>`}
+const te=new TextEncoder(),toBytes=value=>value instanceof Uint8Array?value:te.encode(String(value??'')),u16=n=>new Uint8Array([n&255,(n>>>8)&255]),u32=n=>new Uint8Array([n&255,(n>>>8)&255,(n>>>16)&255,(n>>>24)&255]),cat=xs=>{let size=0;for(const x of xs)size+=x.length;const out=new Uint8Array(size);let i=0;for(const x of xs){out.set(x,i);i+=x.length}return out};const crcTable=(()=>{const t=new Uint32Array(256);for(let n=0;n<256;n++){let c=n;for(let k=0;k<8;k++)c=c&1?0xedb88320^(c>>>1):c>>>1;t[n]=c}return t})();const crc32=b=>{let c=0xffffffff;for(const x of b)c=crcTable[(c^x)&255]^(c>>>8);return(c^0xffffffff)>>>0};function zipBlob(files){const locals=[],centrals=[];let offset=0;for(const [name,data] of Object.entries(files)){const nb=te.encode(name),db=toBytes(data),crc=crc32(db),local=cat([u32(0x04034b50),u16(20),u16(0),u16(0),u16(0),u16(0),u32(crc),u32(db.length),u32(db.length),u16(nb.length),u16(0),nb,db]);locals.push(local);centrals.push(cat([u32(0x02014b50),u16(20),u16(20),u16(0),u16(0),u16(0),u16(0),u32(crc),u32(db.length),u32(db.length),u16(nb.length),u16(0),u16(0),u16(0),u16(0),u32(0),u32(offset),nb]));offset+=local.length}const body=cat(locals),central=cat(centrals),end=cat([u32(0x06054b50),u16(0),u16(0),u16(Object.keys(files).length),u16(Object.keys(files).length),u32(central.length),u32(body.length),u16(0)]);return new Blob([body,central,end],{type:'application/zip'})}
+exports.assetFileMap = assetFileMap;
+exports.assetPathMap = assetPathMap;
+exports.collectExportResources = collectExportResources;
+exports.pageFileMap = pageFileMap;
+exports.buildExportFiles = buildExportFiles;
+exports.buildPageHtml = buildPageHtml;
+exports.runtimeJs = runtimeJs;
+exports.stylesheet = stylesheet;
+exports.exportZip = exportZip;
+exports.exportCurrentHtml = exportCurrentHtml;
+exports.exportProjectJson = exportProjectJson;
+});
+__modules.set("src/engine/interaction.js",(exports,__require)=>{
+const {uid,deepClone,safeUrl} = __require("src/core/utils.js");
+const triggers=[
+ ['click','عند الضغط'],['dblclick','نقرتان'],['hover','عند المرور'],['hoverleave','عند مغادرة العنصر'],
+ ['focus','عند التركيز'],['blur','عند فقدان التركيز'],['input','أثناء الكتابة'],['change','عند التغيير'],
+ ['submit','عند إرسال النموذج'],['keydown','عند ضغط مفتاح'],['contextmenu','عند زر الفأرة الأيمن'],
+ ['mousedown','عند الضغط بالماوس'],['mouseup','عند رفع الماوس'],['load','عند الظهور'],['enterViewport','عند دخول الشاشة'],
+ ['scroll','أثناء التمرير'],['play','عند تشغيل الوسائط'],['pause','عند إيقاف الوسائط'],['ended','عند انتهاء الوسائط']
+];
+const actions=[
+ ['motion','حركة'],['show','إظهار'],['hide','إخفاء'],['toggle','تبديل الظهور'],['scroll','تمرير'],
+ ['page','انتقال لصفحة'],['url','فتح رابط'],['addClass','إضافة Class'],['removeClass','حذف Class'],['toggleClass','تبديل Class'],
+ ['style','تغيير مظهر'],['setText','تغيير النص'],['setAttribute','تغيير خاصية'],['removeAttribute','حذف خاصية'],
+ ['focus','تركيز عنصر'],['blur','إلغاء التركيز'],['submit','إرسال نموذج'],['toast','رسالة صغيرة'],['copy','نسخ للنظام'],
+ ['mediaPlay','تشغيل صوت'],['mediaPause','إيقاف صوت'],['toggleAttribute','تبديل خاصية'],['openAsset','فتح وسيط محمّل'],['downloadAsset','تحميل وسيط'],['setMedia','تبديل وسيط العنصر']
+];
+const motions=[
+ ['fade','ظهور'],['slide','انزلاق'],['zoom','تكبير'],['pulse','نبض'],['glow','وهج'],['lift','ارتفاع'],['shake','اهتزاز'],['bounce','ارتداد'],['spin','دوران']
+];
+
+const capabilityMap={
+ button:{triggers:['click','dblclick','hover','hoverleave','focus'],actions:['motion','page','url','scroll','toast','copy','toggle','addClass','toggleClass','openAsset','downloadAsset','setMedia']},
+ link:{triggers:['click','dblclick','hover','hoverleave'],actions:['page','url','motion','scroll','toast']},
+ card:{triggers:['click','hover','hoverleave'],actions:['page','url','motion','toggle','show','hide','toast']},
+ product:{triggers:['click','hover','hoverleave'],actions:['url','page','motion','toast','toggle']},
+ image:{triggers:['click','dblclick','hover','hoverleave','load'],actions:['motion','url','show','hide','toggle','toast','openAsset','downloadAsset','setMedia']},
+ gallery:{triggers:['click','hover','load'],actions:['motion','toggle','show','hide']},
+ video:{triggers:['click','dblclick','hover','hoverleave','play','pause','ended'],actions:['motion','url','page','scroll','show','hide','toast','openAsset','downloadAsset','setMedia','mediaPlay','mediaPause']},
+ audio:{triggers:['click','play','pause','ended'],actions:['mediaPlay','mediaPause','motion','show','hide','toast','openAsset','downloadAsset','setMedia']},
+ input:{triggers:['focus','blur','input','change','keydown'],actions:['motion','show','hide','toggle','setText','setAttribute','focus','copy','toast']},
+ search:{triggers:['focus','input','keydown','change'],actions:['motion','show','hide','toggle','setText','focus','copy','toast']},
+ textarea:{triggers:['focus','blur','input','change','keydown'],actions:['motion','show','hide','toggle','setText','copy','toast']},
+ select:{triggers:['focus','change'],actions:['motion','show','hide','toggle','setText','toast']},
+ checkbox:{triggers:['change','click','focus'],actions:['toggle','show','hide','motion','setText','toast']},
+ radio:{triggers:['change','click','focus'],actions:['toggle','show','hide','motion','setText','toast']},
+ form:{triggers:['submit','focus','input','change'],actions:['show','hide','toggle','motion','setText','toast']},
+ faq:{triggers:['click','hover'],actions:['motion','toggle','show','hide','scroll']},
+ tabs:{triggers:['click','hover'],actions:['motion','show','hide','toggle']},
+ accordion:{triggers:['click','hover'],actions:['motion','show','hide','toggle']},
+ dropdown:{triggers:['change','focus'],actions:['motion','show','hide','toggle','setText']},
+ navbar:{triggers:['click','hover'],actions:['page','url','motion','scroll']},
+ social:{triggers:['click','hover'],actions:['url','motion','toast']},
+ socialLinks:{triggers:['click','hover'],actions:['url','motion','toast']},
+ default:{triggers:['click','dblclick','hover','hoverleave','focus','blur','load','enterViewport','scroll'],actions:['motion','show','hide','toggle','scroll','page','url','addClass','removeClass','toggleClass','style','toast','openAsset','downloadAsset','setMedia']}
+};
+const interactionCapabilities=type=>capabilityMap[type]||capabilityMap.default;
+function makeStep(action='motion',options={}){
+  return {id:uid('step'),action,delay:0,options:{targetId:null,motion:'fade',duration:420,pageId:null,anchor:'',url:'#',newTab:false,className:'',property:'color',value:'',text:'',attribute:'',attributeValue:'',message:'تم تنفيذ التفاعل',toastDuration:2200,key:'',...options}};
+}
+function makeInteraction(sourceId,trigger='click',action='motion',options={}){
+  const first=makeStep(action,{targetId:sourceId,...options});
+  return {id:uid('int'),sourceId,trigger,enabled:true,once:false,preventDefault:false,stopPropagation:false,cooldown:0,condition:{type:'always',value:'',operator:'contains'},steps:[first],action,options:first.options};
+}
+
+function normalizeStep(step,sourceId){
+  const s=makeStep(step?.action||'motion',{targetId:sourceId,...(step?.options||{})});
+  return {...s,id:typeof step?.id==='string'&&step.id?step.id:s.id,delay:Math.max(0,Number(step?.delay)||0)};
+}
+function normalizeInteraction(item){
+  if(!item||typeof item!=='object'||typeof item.sourceId!=='string')return null;
+  const legacyOptions=item.options||{};
+  const rawSteps=Array.isArray(item.steps)&&item.steps.length?item.steps:[{action:item.action||'motion',options:legacyOptions}];
+  const steps=rawSteps.map(step=>normalizeStep(step,item.sourceId));
+  return {
+    id:typeof item.id==='string'&&item.id?item.id:uid('int'),
+    sourceId:item.sourceId,
+    trigger:item.trigger||'click',enabled:item.enabled!==false,
+    once:Boolean(item.once),preventDefault:Boolean(item.preventDefault),stopPropagation:Boolean(item.stopPropagation),
+    cooldown:Math.max(0,Number(item.cooldown)||0),
+    condition:{type:item.condition?.type||'always',value:String(item.condition?.value??''),operator:item.condition?.operator||'contains'},
+    steps,action:steps[0]?.action||item.action||'motion',options:deepClone(steps[0]?.options||legacyOptions)
+  };
+}
+function upsertInteraction(project,item){const x=normalizeInteraction(item);if(!x)return null;project.interactions=Array.isArray(project.interactions)?project.interactions:[];const i=project.interactions.findIndex(v=>v.id===x.id);if(i<0)project.interactions.push(deepClone(x));else project.interactions[i]=deepClone(x);return x}
+const removeInteraction=(project,id)=>{project.interactions=(project.interactions||[]).filter(x=>x.id!==id)};
+const interactionsFor=(project,id)=>(project.interactions||[]).filter(x=>x.sourceId===id&&x.enabled!==false).map(normalizeInteraction).filter(Boolean);
+const labels=a=>Object.fromEntries(a);
+const triggerLabel=x=>labels(triggers)[x]||x;
+const actionLabel=x=>labels(actions)[x]||x;
+
+function assetById(project,id){return (project?.assets||[]).find(asset=>asset.id===id)||null}
+function select(doc,id){if(!id)return null;const nodes=doc.querySelectorAll('[data-node-id],[data-runtime-id]');for(const node of nodes)if(node.dataset.nodeId===id||node.dataset.runtimeId===id)return node;return null}
+function mediaTarget(source){return source?.matches?.('audio,video')?source:(source?.querySelector?.('audio,video')||source)}
+function eventTargetFor(source,type){if(['play','pause','ended'].includes(type))return mediaTarget(source);if(['input','change','focus','blur','keydown','submit'].includes(type))return source?.querySelector?.('input,textarea,select,button,form')||source;return source}
+
+function animate(element,name='fade',duration=420){
+  if(!element)return;
+  const map={fade:'fade',slide:'slide',zoom:'zoom',pulse:'pulse',glow:'glow',lift:'lift',shake:'shake',bounce:'bounce',spin:'spin'};
+  const safe=map[name]||'fade';
+  element.classList.remove(...[...element.classList].filter(x=>x.startsWith('motion-')));
+  void element.offsetWidth;
+  element.style.animationDuration=`${Math.max(0,Math.min(10000,Number(duration)||420))}ms`;
+  element.classList.add(`motion-${safe}`);
+  element.addEventListener('animationend',()=>{element.classList.remove(`motion-${safe}`);element.style.animationDuration=''}, {once:true});
+}
+
+function valueOf(target,event){
+  const field=event?.target?.matches?.('input,textarea,select')?event.target:target?.querySelector?.('input,textarea,select');
+  if(field){if(field.type==='checkbox'||field.type==='radio')return field.checked?'true':'false';return String(field.value??'')}
+  return String(target?.textContent||'').trim();
+}
+function visible(target){if(!target)return false;const r=target.getBoundingClientRect?.();const cs=globalThis.getComputedStyle?.(target);return target.hidden!==true&&cs?.display!=='none'&&cs?.visibility!=='hidden'&&(!r||r.width>0||r.height>0)}
+function conditionPasses(i,event,source,device){
+  const c=i.condition||{type:'always'};if(c.type==='always')return true;
+  if(c.type==='device')return String(device||'desktop')===String(c.value||'desktop');
+  const actual=valueOf(event?.currentTarget||source,event);
+  if(c.type==='not-empty')return actual.trim()!=='';
+  if(c.type==='visible')return visible(select(source?.ownerDocument,i.steps?.[0]?.options?.targetId)||source);
+  if(c.type==='value'){const wanted=String(c.value??'');if(c.operator==='equals')return actual===wanted;if(c.operator==='not-equals')return actual!==wanted;if(c.operator==='starts')return actual.startsWith(wanted);if(c.operator==='ends')return actual.endsWith(wanted);return actual.includes(wanted)}
+  if(c.type==='key')return String(event?.key||'')===String(c.value||'');
+  return true;
+}
+
+function toast(document,message,duration=2200){
+  const old=document.querySelector('[data-bunaa-toast]');old?.remove();
+  const el=document.createElement('div');el.dataset.bunaaToast='1';el.textContent=String(message||'تم التنفيذ');el.style.cssText='position:fixed;inset-inline-start:50%;bottom:24px;transform:translateX(-50%);z-index:2147483000;padding:11px 16px;border-radius:12px;background:#171b2a;color:#fff;font:700 13px system-ui;box-shadow:0 16px 40px rgba(0,0,0,.2);pointer-events:none;max-width:min(90vw,520px);text-align:center';document.body.appendChild(el);setTimeout(()=>el.remove(),Math.max(400,Number(duration)||2200))
+}
+async function copyText(text,document){try{if(globalThis.navigator?.clipboard?.writeText){await globalThis.navigator.clipboard.writeText(String(text));toast(document,'تم النسخ');return true}}catch{}const area=document.createElement('textarea');area.value=String(text);area.style.position='fixed';area.style.opacity='0';document.body.appendChild(area);area.select();try{document.execCommand('copy');toast(document,'تم النسخ');return true}finally{area.remove()}}
+function targetForStep(document,step,source){return select(document,step.options?.targetId)||source}
+
+function assetUrl(asset){return asset?.data||asset?.url||''}
+function triggerAssetDownload(url,filename){if(!url)return false;const link=document.createElement('a');link.href=url;link.download=filename||'download';link.target='_blank';link.rel='noopener';document.body.appendChild(link);link.click();link.remove();return true}
+async function runInteraction(interaction,event,{document,source,navigate,device='desktop',project}={}){
+  const i=normalizeInteraction(interaction);if(!i||!source||!conditionPasses(i,event,source,device))return false;
+  const state=runInteraction._state||(runInteraction._state=new WeakMap());
+  let bucket=state.get(source);if(!bucket){bucket=new Map();state.set(source,bucket)}
+  const runtimeKey=i.id;const now=Date.now();const previous=bucket.get(runtimeKey)||{last:0,fired:false};
+  if(i.once&&previous.fired)return false;if(i.cooldown&&now-previous.last<i.cooldown)return false;
+  bucket.set(runtimeKey,{last:now,fired:true});
+  if(i.preventDefault)event?.preventDefault?.();if(i.stopPropagation)event?.stopPropagation?.();
+  for(const step of i.steps){if(step.delay)await new Promise(resolve=>setTimeout(resolve,Math.min(10000,Number(step.delay)||0)));const o=step.options||{},target=targetForStep(document,step,source);switch(step.action){
+    case'motion':animate(target,o.motion,o.duration);break;
+    case'show':if(target)target.hidden=false;break;
+    case'hide':if(target)target.hidden=true;break;
+    case'toggle':if(target)target.hidden=!target.hidden;break;
+    case'scroll':target?.scrollIntoView?.({behavior:'smooth',block:o.anchor==='start'?'start':o.anchor==='end'?'end':'center'});break;
+    case'page':if(o.pageId)navigate?.(o.pageId);break;
+    case'url':{const u=safeUrl(o.url||'#');if(u!=='#'){if(o.newTab)window.open(u,'_blank','noopener');else location.href=u}break}
+    case'addClass':if(target&&o.className)target.classList.add(o.className);break;
+    case'removeClass':if(target&&o.className)target.classList.remove(o.className);break;
+    case'toggleClass':if(target&&o.className)target.classList.toggle(o.className);break;
+    case'style':if(target&&o.property&&/^[a-zA-Z-]+$/.test(o.property))target.style.setProperty(o.property,String(o.value??''));break;
+    case'setText':if(target)target.textContent=String(o.text??'');break;
+    case'setAttribute':if(target&&o.attribute)target.setAttribute(String(o.attribute),String(o.attributeValue??''));break;
+    case'removeAttribute':if(target&&o.attribute)target.removeAttribute(String(o.attribute));break;
+    case'toggleAttribute':if(target&&o.attribute){target.toggleAttribute(String(o.attribute))}break;
+    case'focus':target?.focus?.();break;
+    case'blur':target?.blur?.();break;
+    case'submit':{const form=target?.tagName==='FORM'?target:target?.closest?.('form')||target?.querySelector?.('form');if(form?.requestSubmit)form.requestSubmit();else form?.submit?.();break}
+    case'toast':toast(document,o.message,o.toastDuration);break;
+    case'copy':await copyText(o.text||valueOf(target,event),document);break;
+    case'mediaPlay':{const m=mediaTarget(target);m?.play?.().catch?.(()=>{});break}
+    case'mediaPause':{const m=mediaTarget(target);m?.pause?.();break}
+    case'openAsset':{const asset=assetById(project,o.assetId),url=assetUrl(asset);if(url){if(o.newTab!==false)globalThis.open?.(url,'_blank','noopener');else globalThis.location&&(globalThis.location.href=url)}break}
+    case'downloadAsset':{const asset=assetById(project,o.assetId);triggerAssetDownload(assetUrl(asset),asset?.filename||asset?.name||'download');break}
+    case'setMedia':{const asset=assetById(project,o.assetId),url=assetUrl(asset);if(!url||!target)break;const media=mediaTarget(target);if(media?.setAttribute)media.setAttribute('src',url);if(media?.load)media.load();if(asset?.alt&&media?.tagName==='IMG')media.setAttribute('alt',asset.alt);break}
+  }}
+  return true;
+}
+function createRuntime({document,project,navigate,device='desktop'}){
+  const clean=[];const on=(target,type,fn,opts)=>{target.addEventListener(type,fn,opts);clean.push(()=>target.removeEventListener(type,fn,opts))};
+  const nodeMap=new Map((project.pages||[]).flatMap(page=>{const out=[];const walk=(nodes)=>{for(const node of nodes||[]){out.push(node);walk(node.children)}};walk(page.nodes);return out}).map(node=>[node.id,node]));
+  for(const raw of project.interactions||[]){const i=normalizeInteraction(raw);if(!i?.enabled||!nodeMap.has(i.sourceId))continue;const source=select(document,i.sourceId);if(!source)continue;
+    const target=eventTargetFor(source,i.trigger);const fire=event=>{const current=event?.currentTarget||source;const isAnchor=current?.tagName==='A'||current?.closest?.('a');const takesNavigation=i.steps?.some(step=>['page','url'].includes(step.action));if(['click','dblclick','contextmenu'].includes(i.trigger)&&isAnchor&&(takesNavigation||i.trigger==='click'))event?.preventDefault?.();const p=runInteraction(i,event,{document,source,navigate,device,project});if(p?.catch)p.catch(error=>console.warn('Bunaa interaction failed',error))};
+    if(i.trigger==='load'){const t=setTimeout(()=>fire({currentTarget:source,preventDefault(){},stopPropagation(){}}),60);clean.push(()=>clearTimeout(t));continue}
+    if(i.trigger==='enterViewport'&&'IntersectionObserver' in globalThis){const ob=new IntersectionObserver(es=>{if(es.some(e=>e.isIntersecting))fire({currentTarget:source})},{threshold:.15});ob.observe(source);clean.push(()=>ob.disconnect());continue}
+    if(i.trigger==='scroll'){const handler=()=>{if(visible(source))fire({currentTarget:source})};on(window,'scroll',handler,{passive:true});continue}
+    if(i.trigger==='hover')on(target,'pointerenter',fire);else if(i.trigger==='hoverleave')on(target,'pointerleave',fire);else on(target,i.trigger,fire);
+  }
+  return()=>clean.splice(0).forEach(fn=>fn());
+}
+exports.triggers = triggers;
+exports.actions = actions;
+exports.motions = motions;
+exports.interactionCapabilities = interactionCapabilities;
+exports.makeStep = makeStep;
+exports.makeInteraction = makeInteraction;
+exports.normalizeInteraction = normalizeInteraction;
+exports.upsertInteraction = upsertInteraction;
+exports.removeInteraction = removeInteraction;
+exports.interactionsFor = interactionsFor;
+exports.triggerLabel = triggerLabel;
+exports.actionLabel = actionLabel;
+exports.runInteraction = runInteraction;
+exports.createRuntime = createRuntime;
+});
+__modules.set("src/engine/layout.js",(exports,__require)=>{
+const {clamp} = __require("src/core/utils.js");
+const {getToken} = __require("src/core/design-system.js");
+const {resolveVariableValue} = __require("src/core/variables.js");
+const DEVICES=['desktop','tablet','mobile'];
+const px=v=>typeof v==='number'?`${v}px`:v;
+const resolveToken=(value,theme,project)=>{if(typeof value!=='string')return value;const m=value.match(/^token:(.+)$/);if(m)return getToken(theme,m[1],value);return resolveVariableValue(value,project)};
+const numericPx=v=>{if(typeof v==='number'&&Number.isFinite(v))return v;const m=String(v??'').trim().match(/^(-?\d+(?:\.\d+)?)px$/i);return m?Number(m[1]):null};
+const deviceWidth=(project,device)=>Number(project?.devices?.[device]?.width)||({desktop:1180,tablet:768,mobile:390}[device]||1180);
+function keepInsideDevice(s,project,device){
+  const width=deviceWidth(project,device);
+  const w=numericPx(s.width),mw=numericPx(s.maxWidth),min=numericPx(s.minWidth);
+  if(w!=null&&w>width&&device!=='desktop')s.width='100%';
+  if(mw!=null&&mw>width)s.maxWidth='100%';
+  if(min!=null&&min>width)s.minWidth=0;
+  s.maxWidth=s.maxWidth||'100%';
+  s.minWidth=0;
+  s.boxSizing='border-box';
+  return s;
+}
+function resolveStyle(node,device='desktop',theme={},styleLibrary={},project=null){
+  const responsive=node.responsive?.[device]||{};const classStyles=(node.classes||[]).reduce((acc,name)=>({...acc,...(styleLibrary?.classes?.[name]||{})}),{});const textStyle=styleLibrary?.textStyles?.[node.props?.textStyle]||{};const s={...classStyles,...textStyle,...(node.style||{}),...responsive};
+  Object.entries(s).forEach(([key,value])=>{s[key]=resolveToken(value,theme,project)});
+  keepInsideDevice(s,project,device);
+  if(node.type==='section'){s.width=s.width||'100%';s.maxWidth='100%';s.boxSizing='border-box';s.paddingBlock=s.paddingBlock||px(getToken(theme,'space6',44));}
+  if(node.type==='container'){s.width=s.width||'100%';s.maxWidth=Math.min(numericPx(s.maxWidth)??getToken(theme,'container',1180),deviceWidth(project,device));s.marginInline=s.marginInline||'auto';s.boxSizing='border-box';s.paddingInline=s.paddingInline||px(getToken(theme,'space4',18));}
+  if(['grid','columns'].includes(node.type)){s.display=s.display||'grid';const count=clamp(Number(node.props?.count)||3,1,6);const fallback= device==='mobile'?'1fr':device==='tablet'?`repeat(${Math.min(count,2)},minmax(0,1fr))`:`repeat(${count},minmax(0,1fr))`;s.gridTemplateColumns=s.gridTemplateColumns||fallback;s.gap=s.gap??node.props?.gap??getToken(theme,'space3',12);}
+  if(node.type==='stack'||node.type==='spaced'){s.display=s.display||'flex';s.flexDirection=s.flexDirection||'column';s.gap=s.gap??node.props?.gap??getToken(theme,'space3',12);}
+  if(node.type==='spaced'){s.flexDirection=device==='mobile'?'column':'row';s.justifyContent=s.justifyContent||'space-between';s.alignItems=s.alignItems||'center';}
+  if(node.layout){if(node.layout.display&&node.layout.display!=='block')s.display=s.display||node.layout.display;if(node.layout.gap)s.gap=s.gap??node.layout.gap;if(node.layout.direction)s.flexDirection=s.flexDirection||node.layout.direction;if(node.layout.align==='center')s.alignItems=s.alignItems||'center';if(node.layout.justify==='center')s.justifyContent=s.justifyContent||'center';if(node.layout.wrap)s.flexWrap='wrap';}
+  if(s.radius!=null)s.borderRadius=s.radius===getToken(theme,'radiusPill',999)?'999px':px(s.radius);if(s.paddingY!=null)s.paddingBlock=px(s.paddingY);if(s.paddingX!=null)s.paddingInline=px(s.paddingX);if(s.shadow){const shadow=s.shadow==='medium'?getToken(theme,'shadowMedium','0 20px 50px rgba(25,30,55,.12)'):getToken(theme,'shadowSoft','0 12px 30px rgba(25,30,55,.08)');s.boxShadow=shadow}
+  if(s.width!=null)s.width=px(s.width);if(s.height!=null)s.height=px(s.height);if(s.maxWidth!=null)s.maxWidth=px(s.maxWidth);if(s.minHeight!=null)s.minHeight=px(s.minHeight);if(!s.color)s.color=getToken(theme,'text',theme.text);
+  return s;
+}
+const numericUnitless=new Set(['opacity','zIndex','fontWeight','lineHeight','flexGrow','flexShrink','order']);
+const kebab=s=>s.replace(/[A-Z]/g,m=>`-${m.toLowerCase()}`);
+const styleObjectToCss=s=>Object.entries(s).filter(([k,v])=>v!==undefined&&v!==null&&v!==''&&!['radius','paddingY','paddingX','shadow'].includes(k)).map(([k,v])=>`${kebab(k)}:${typeof v==='number'&&!numericUnitless.has(k)?`${v}px`:v};`).join('');
+function propagateStyle(node,device,patch){if(!node)return;node.responsive=node.responsive||{};const ratios={desktop:1,tablet:.78,mobile:.5};for(const d of DEVICES){if(d===device)continue;node.responsive[d]={...(node.responsive[d]||{})};for(const [k,v] of Object.entries(patch)){if(typeof v==='number'&&['fontSize','gap','height','marginTop','marginBottom','paddingY','paddingX'].includes(k))node.responsive[d][k]=Math.round(v*(ratios[d]/ratios[device]));else node.responsive[d][k]=v}}}
+exports.DEVICES = DEVICES;
+exports.resolveStyle = resolveStyle;
+exports.styleObjectToCss = styleObjectToCss;
+exports.propagateStyle = propagateStyle;
+});
+__modules.set("src/engine/preview-router.js",(exports,__require)=>{
+function buildPreviewRuntimeScript(pageIds,interactions,assets,device){
+  const safeJson=value=>JSON.stringify(value??[]).replace(/</g,'\\u003c').replace(/\u2028/g,'\\u2028').replace(/\u2029/g,'\\u2029');
+  const pagesJson=safeJson(Array.isArray(pageIds)?pageIds:[]);
+  const interactionsJson=safeJson(Array.isArray(interactions)?interactions:[]);
+  const assetsJson=safeJson(Array.isArray(assets)?assets:[]);
+  const deviceJson=safeJson(device||'desktop');
+  const script=`
+(function(){
+'use strict';
+var PAGE_IDS=${pagesJson},INTERACTIONS=${interactionsJson},ASSETS=${assetsJson},DEVICE=${deviceJson};
+var sections=Array.prototype.slice.call(document.querySelectorAll('[data-preview-section]'));
+var interactionState=new Map();
+function safeUrl(value){var s=String(value==null?'':value).trim();if(!s||s==='#')return '#';if(/^(javascript|vbscript|file|data):/i.test(s))return '#';if(/^(https?:|mailto:|tel:)/i.test(s))return s;if(/^[/#.][^\\s]*$/.test(s)||/^[^:\\s]+(?:[/#][^\\s]*)?$/.test(s))return s;return '#';}
+function findSection(id){return sections.find(function(section){return section.dataset.previewSection===String(id);});}
+function getHashId(){var hash=location.hash||'';return hash.indexOf('#page-')===0?decodeURIComponent(hash.slice(6)):null;}
+function getCurrentId(){return getHashId()||PAGE_IDS[0]||null;}
+function setActive(id,updateHash){var target=findSection(id)||sections[0];if(!target)return false;var targetId=target.dataset.previewSection;sections.forEach(function(section){section.hidden=section!==target;});var wanted='#page-'+encodeURIComponent(targetId);if(updateHash&&location.hash!==wanted){try{history.replaceState(null,'',wanted);}catch(error){location.hash=wanted.slice(1);}}if(updateHash&&target.scrollIntoView)target.scrollIntoView({behavior:'smooth',block:'start'});return true;}
+function goToPage(id){return setActive(String(id||''),true);}
+function getPageTarget(link){var explicit=link.dataset.pageTarget||link.dataset.previewPage||'';if(explicit&&PAGE_IDS.indexOf(explicit)!==-1)return explicit;var href=link.getAttribute('href')||'';return href.indexOf('#page-')===0?decodeURIComponent(href.slice(6)):null;}
+function findNode(id){return id?Array.prototype.find.call(document.querySelectorAll('[data-runtime-id]'),function(node){return node.dataset.runtimeId===String(id);}):null;}
+function nodeForEvent(event){var target=event&&event.target;return target&&target.closest?target.closest('[data-runtime-id]'):null;}
+function stepsFor(item){return Array.isArray(item.steps)&&item.steps.length?item.steps:[{action:item.action||'motion',options:item.options||{},delay:0}];}
+function sourceValue(source,event){var eventTarget=event&&event.target;var field=eventTarget&&eventTarget.matches&&eventTarget.matches('input,textarea,select')?eventTarget:(source&&source.querySelector?source.querySelector('input,textarea,select'):null);if(field){if(field.type==='checkbox'||field.type==='radio')return field.checked?'true':'false';return String(field.value==null?'':field.value);}return String(source&&source.textContent||'').trim();}
+function isVisible(target){if(!target||target.hidden)return false;var style=getComputedStyle(target),rect=target.getBoundingClientRect();return style.display!=='none'&&style.visibility!=='hidden'&&(rect.width>0||rect.height>0);}
+function conditionPasses(item,source,event){var c=item.condition||{type:'always'};if(!c.type||c.type==='always')return true;if(c.type==='device')return String(c.value||'desktop')===String(DEVICE);if(c.type==='visible'){var o=stepsFor(item)[0].options||{};return isVisible(findNode(o.targetId)||source);}var actual=sourceValue(source,event);if(c.type==='not-empty')return actual.trim()!=='';if(c.type==='key')return String(event&&event.key||'')===String(c.value||'');if(c.type==='value'){var wanted=String(c.value==null?'':c.value);if(c.operator==='equals')return actual===wanted;if(c.operator==='not-equals')return actual!==wanted;if(c.operator==='starts')return actual.startsWith(wanted);if(c.operator==='ends')return actual.endsWith(wanted);return actual.includes(wanted);}return true;}
+function playMotion(target,name,duration){if(!target)return;Array.prototype.slice.call(target.classList).filter(function(c){return c.indexOf('motion-')===0;}).forEach(function(c){target.classList.remove(c);});void target.offsetWidth;var safe=['fade','slide','zoom','pulse','glow','lift','shake','bounce','spin'].indexOf(name)>=0?name:'fade';target.style.animationDuration=Math.max(0,Math.min(10000,Number(duration)||420))+'ms';target.classList.add('motion-'+safe);target.addEventListener('animationend',function(){target.classList.remove('motion-'+safe);target.style.animationDuration='';},{once:true});}
+function showToast(message,duration){var old=document.querySelector('[data-bunaa-toast]');if(old)old.remove();var toast=document.createElement('div');toast.dataset.bunaaToast='1';toast.textContent=String(message||'تم تنفيذ التفاعل');toast.style.cssText='position:fixed;inset-inline-start:50%;bottom:24px;transform:translateX(-50%);z-index:2147483000;padding:11px 16px;border-radius:12px;background:#171b2a;color:#fff;font:700 13px system-ui;box-shadow:0 16px 40px rgba(0,0,0,.2);pointer-events:none;max-width:min(90vw,520px);text-align:center';document.body.appendChild(toast);setTimeout(function(){toast.remove();},Math.max(400,Number(duration)||2200));}
+function copyText(text){var value=String(text==null?'':text);if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(value).then(function(){showToast('تم النسخ');}).catch(function(){copyFallback(value);});}else copyFallback(value);}
+function copyFallback(value){var area=document.createElement('textarea');area.value=value;area.style.position='fixed';area.style.opacity='0';document.body.appendChild(area);area.select();try{document.execCommand('copy');showToast('تم النسخ');}catch(error){showToast('تعذر النسخ في هذا المتصفح');}area.remove();}
+function targetFor(step,source){var options=step.options||{};return findNode(options.targetId)||source;}
+function assetFor(id){return ASSETS.find(function(asset){return asset&&asset.id===id;})||null;}
+function assetUrl(asset){return asset&&(asset.data||asset.url)||'';}
+function mediaFor(target){return target&&(target.matches&&target.matches('audio,video')?target:(target.querySelector&&target.querySelector('audio,video')))||null;}
+function classNames(value){return String(value||'').split(/\\s+/).filter(function(name){return /^[A-Za-z_][\\w-]*$/.test(name);});}
+async function runStep(step,source,event){var options=step.options||{},target=targetFor(step,source),value;switch(step.action){
+case'motion':playMotion(target,options.motion,options.duration);break;
+case'show':if(target)target.hidden=false;break;
+case'hide':if(target)target.hidden=true;break;
+case'toggle':if(target)target.hidden=!target.hidden;break;
+case'scroll':if(target&&target.scrollIntoView)target.scrollIntoView({behavior:'smooth',block:options.anchor==='start'?'start':options.anchor==='end'?'end':'center'});break;
+case'page':if(options.pageId)goToPage(options.pageId);break;
+case'url':value=safeUrl(options.url||'#');if(value!=='#'){if(options.newTab)window.open(value,'_blank','noopener,noreferrer');else if(value.indexOf('#page-')===0)goToPage(decodeURIComponent(value.slice(6)));else location.href=value;}break;
+case'addClass':if(target)classNames(options.className).forEach(function(name){target.classList.add(name);});break;
+case'removeClass':if(target)classNames(options.className).forEach(function(name){target.classList.remove(name);});break;
+case'toggleClass':if(target)classNames(options.className).forEach(function(name){target.classList.toggle(name);});break;
+case'style':if(target&&/^[a-zA-Z-]+$/.test(options.property||'')&&!/javascript:/i.test(String(options.value||'')))target.style.setProperty(options.property,String(options.value==null?'':options.value));break;
+case'setText':if(target)target.textContent=String(options.text==null?'':options.text);break;
+case'setAttribute':if(target&&/^[A-Za-z_:][A-Za-z0-9_.:-]*$/.test(options.attribute||'')&&!/^on/i.test(options.attribute))target.setAttribute(String(options.attribute),String(options.attributeValue==null?'':options.attributeValue));break;
+case'removeAttribute':if(target&&/^[A-Za-z_:][A-Za-z0-9_.:-]*$/.test(options.attribute||'')&&!/^on/i.test(options.attribute))target.removeAttribute(String(options.attribute));break;
+case'toggleAttribute':if(target&&/^[A-Za-z_:][A-Za-z0-9_.:-]*$/.test(options.attribute||'')&&!/^on/i.test(options.attribute))target.toggleAttribute(String(options.attribute));break;
+case'focus':if(target&&target.focus)target.focus();break;
+case'blur':if(target&&target.blur)target.blur();break;
+case'submit':{var form=target&&(target.tagName==='FORM'?target:(target.closest&&target.closest('form'))||(target.querySelector&&target.querySelector('form')));if(form&&form.requestSubmit)form.requestSubmit();else if(form&&form.submit)form.submit();break;}
+case'toast':showToast(options.message,options.toastDuration);break;
+case'copy':copyText(options.text||sourceValue(target,event));break;
+case'mediaPlay':{var media=mediaFor(target);if(media&&media.play){var playResult=media.play();if(playResult&&playResult.catch)playResult.catch(function(){});}break;}
+case'mediaPause':{var paused=mediaFor(target);if(paused&&paused.pause)paused.pause();break;}
+case'openAsset':{var openedAsset=assetFor(options.assetId),openedUrl=assetUrl(openedAsset);if(openedUrl){if(options.newTab!==false)window.open(openedUrl,'_blank','noopener,noreferrer');else location.href=safeUrl(openedUrl);}break;}
+case'downloadAsset':{var downloaded=assetFor(options.assetId),downloadUrl=assetUrl(downloaded);if(downloadUrl){var anchor=document.createElement('a');anchor.href=downloadUrl;anchor.download=downloaded.filename||downloaded.name||'download';anchor.rel='noopener';document.body.appendChild(anchor);anchor.click();anchor.remove();}break;}
+case'setMedia':{var mediaAsset=assetFor(options.assetId),mediaUrl=assetUrl(mediaAsset);if(mediaUrl&&target){var mediaTarget=target.matches&&target.matches('img,video,audio')?target:(target.querySelector&&target.querySelector('img,video,audio'));if(mediaTarget){mediaTarget.setAttribute('src',mediaUrl);if(mediaTarget.load)mediaTarget.load();if(mediaAsset.alt&&mediaTarget.tagName==='IMG')mediaTarget.alt=mediaAsset.alt;}}break;}
+}}
+async function runOne(item,source,event){if(!source||item.enabled===false||!conditionPasses(item,source,event))return;var id=String(item.id||item.sourceId+':'+item.trigger),prior=interactionState.get(id)||{fired:false,last:0},now=Date.now();if(item.once&&prior.fired)return;if(item.cooldown&&now-prior.last<Number(item.cooldown))return;interactionState.set(id,{fired:true,last:now});if(item.preventDefault&&event&&event.preventDefault)event.preventDefault();if(item.stopPropagation&&event&&event.stopPropagation)event.stopPropagation();var steps=stepsFor(item);for(var i=0;i<steps.length;i++){var step=steps[i]||{};var delay=Math.max(0,Math.min(10000,Number(step.delay)||0));if(delay)await new Promise(function(resolve){setTimeout(resolve,delay);});await runStep(step,source,event);}}
+function itemsFor(sourceId,trigger){return INTERACTIONS.filter(function(item){return item&&item.enabled!==false&&item.sourceId===sourceId&&item.trigger===trigger;});}
+function runTrigger(sourceId,trigger,event){itemsFor(sourceId,trigger).forEach(function(item){runOne(item,findNode(sourceId),event).catch(function(error){console.warn('Bunaa preview interaction failed',error);});});}
+function hasClickBehavior(sourceId){return INTERACTIONS.some(function(item){return item&&item.enabled!==false&&item.sourceId===sourceId&&(item.trigger==='click'||item.trigger==='dblclick');});}
+function handleEvent(trigger,event){var source=nodeForEvent(event);if(!source)return;var id=source.dataset.runtimeId;
+if(trigger==='hover'||trigger==='hoverleave'){var related=event.relatedTarget;if(related&&(related===source||source.contains(related)))return;}
+if(trigger==='blur'&&source.contains(document.activeElement))return;
+if(trigger==='click'&&hasClickBehavior(id)){event.preventDefault();runTrigger(id,'click',event);return;}
+runTrigger(id,trigger,event);
+if(trigger==='dblclick'||trigger==='contextmenu'){if(hasClickBehavior(id))event.preventDefault();}
+}
+var delegated={click:'click',dblclick:'dblclick',pointerover:'hover',pointerout:'hoverleave',focusin:'focus',focusout:'blur',input:'input',change:'change',submit:'submit',keydown:'keydown',contextmenu:'contextmenu',mousedown:'mousedown',mouseup:'mouseup',play:'play',pause:'pause',ended:'ended'};
+Object.keys(delegated).forEach(function(type){document.addEventListener(type,function(event){handleEvent(delegated[type],event);},type==='play'||type==='pause'||type==='ended');});
+function getPageTargetForEvent(event){var link=event.target&&event.target.closest?event.target.closest('a'):null;if(!link)return null;var id=getPageTarget(link);return id&&PAGE_IDS.indexOf(id)!==-1?id:null;}
+document.addEventListener('click',function(event){var source=nodeForEvent(event);if(source&&hasClickBehavior(source.dataset.runtimeId))return;var pageId=getPageTargetForEvent(event);if(pageId){event.preventDefault();goToPage(pageId);}});
+window.addEventListener('hashchange',function(){setActive(getCurrentId(),false);});
+setActive(getCurrentId(),false);
+INTERACTIONS.filter(function(item){return item&&item.enabled!==false&&item.trigger==='load';}).forEach(function(item){setTimeout(function(){runOne(item,findNode(item.sourceId),{currentTarget:findNode(item.sourceId)}).catch(function(error){console.warn(error);});},60);});
+if('IntersectionObserver' in window){var observed=new Map();INTERACTIONS.filter(function(item){return item&&item.enabled!==false&&item.trigger==='enterViewport';}).forEach(function(item){var source=findNode(item.sourceId);if(!source)return;var observer=observed.get(source);if(!observer){observer=new IntersectionObserver(function(entries){entries.forEach(function(entry){if(entry.isIntersecting)runTrigger(entry.target.dataset.runtimeId,'enterViewport',{currentTarget:entry.target});});},{threshold:.15});observer.observe(source);observed.set(source,observer);}});}
+var scrollBusy=false;window.addEventListener('scroll',function(){if(scrollBusy)return;scrollBusy=true;requestAnimationFrame(function(){scrollBusy=false;INTERACTIONS.filter(function(item){return item&&item.enabled!==false&&item.trigger==='scroll';}).forEach(function(item){var source=findNode(item.sourceId);if(isVisible(source))runTrigger(item.sourceId,'scroll',{currentTarget:source});});});},{passive:true});
+// Built-in component behavior is part of preview as well as exported runtime.
+// These are local demo interactions; external checkout/form submission requires a service.
+var previewCartCount=0;
+function componentFeedback(message){var status=document.querySelector('[data-bunaa-component-status]');if(!status){status=document.createElement('div');status.dataset.bunaaComponentStatus='1';status.setAttribute('role','status');status.setAttribute('aria-live','polite');status.style.cssText='position:fixed;bottom:16px;inset-inline-end:16px;z-index:2147483000;padding:10px 14px;border-radius:10px;background:#171b2a;color:#fff;font:600 13px system-ui;box-shadow:0 12px 28px rgba(0,0,0,.2);max-width:90vw';document.body.appendChild(status);}status.textContent=message;}
+document.addEventListener('click',function(event){
+ var filter=event.target&&event.target.closest?event.target.closest('[data-portfolio-filter]'):null;
+ if(filter){event.preventDefault();var portfolio=filter.closest('.built-portfolio');if(!portfolio)return;var wanted=filter.dataset.portfolioFilter||'الكل';portfolio.querySelectorAll('[data-portfolio-filter]').forEach(function(button){button.setAttribute('aria-pressed',String(button===filter));});portfolio.querySelectorAll('[data-portfolio-category]').forEach(function(card){card.hidden=wanted!=='الكل'&&card.dataset.portfolioCategory!==wanted;});return;}
+ var move=event.target&&event.target.closest?event.target.closest('[data-carousel-move]'):null;
+ if(move){event.preventDefault();var carousel=move.closest('.built-testimonial-carousel');if(!carousel)return;var slides=Array.prototype.slice.call(carousel.querySelectorAll('[data-carousel-slide]'));if(!slides.length)return;var index=slides.findIndex(function(slide){return !slide.hidden;});index=(index+Number(move.dataset.carouselMove||0)+slides.length)%slides.length;slides.forEach(function(slide,i){slide.hidden=i!==index;});var label=carousel.querySelector('[data-carousel-status]');if(label)label.textContent=String(index+1)+' / '+String(slides.length);return;}
+ var tab=event.target&&event.target.closest?event.target.closest('[data-tab-index]'):null;
+ if(tab){event.preventDefault();var tabHost=tab.closest('.built-tabs');if(!tabHost)return;tabHost.querySelectorAll('[data-tab-index]').forEach(function(button){button.classList.toggle('active',button===tab);});tabHost.querySelectorAll('[data-tab-panel]').forEach(function(panel){panel.hidden=panel.dataset.tabPanel!==tab.dataset.tabIndex;});return;}
+ var add=event.target&&event.target.closest?event.target.closest('[data-cart-add]'):null;
+ if(add){event.preventDefault();previewCartCount+=1;window.__BUNAA_CART={count:previewCartCount,items:(window.__BUNAA_CART&&window.__BUNAA_CART.items||[]).concat([{id:add.dataset.cartAdd,name:add.dataset.cartName}])};add.textContent='أضيفت ✓';add.setAttribute('aria-pressed','true');componentFeedback('أضيف إلى السلة: '+(add.dataset.cartName||'منتج')+' — العدد '+previewCartCount);return;}
+ var back=event.target&&event.target.closest?event.target.closest('[data-back-to-top]'):null;if(back){event.preventDefault();window.scrollTo({top:0,behavior:'smooth'});return;}
+ var cookie=event.target&&event.target.closest?event.target.closest('[data-cookie-dismiss]'):null;if(cookie){event.preventDefault();cookie.closest('.built-cookie')&&cookie.closest('.built-cookie').remove();componentFeedback('تم إخفاء رسالة ملفات الارتباط');}
+});
+document.addEventListener('submit',function(event){var form=event.target&&event.target.closest?event.target.closest('form[data-local-contact-form]'):null;if(!form)return;event.preventDefault();var status=form.querySelector('[data-form-status]');if(!form.checkValidity()){form.reportValidity&&form.reportValidity();if(status)status.textContent='راجع الحقول المطلوبة والبريد الإلكتروني.';return;}if(status)status.textContent='تم التحقق من الحقول محليًا. لإرسال البيانات فعليًا إلى بريد أو CRM، اربط النموذج بخدمة إرسال أو بخادم.';form.dataset.validated='true';componentFeedback('تم التحقق من النموذج. لم يتم إرسال بيانات إلى خادم.');});
+})();`;
+  return `<script>${script}<\/script>`;
+}
+exports.buildPreviewRuntimeScript = buildPreviewRuntimeScript;
+});
+__modules.set("src/engine/quality-audit.js",(exports,__require)=>{
+const {auditProject: coreAuditProject} = __require("src/core/quality.js");
+const auditProject = coreAuditProject;
+exports.auditProject = auditProject;
+});
+__modules.set("src/engine/renderer.js",(exports,__require)=>{
+const {safeUrl,safeMediaUrl} = __require("src/core/utils.js");
+const {resolveStyle,styleObjectToCss} = __require("src/engine/layout.js");
+const {applyThemeVars} = __require("src/core/design-system.js");
+const {pageAnchor,resolvePageTarget} = __require("src/engine/routing.js");
+const {resolveSymbol} = __require("src/core/symbols.js");
+const {getCollectionItems} = __require("src/core/cms.js");
+const {findAsset} = __require("src/core/assets.js");
+
+const el=(tag,cls='')=>{const node=document.createElement(tag);if(cls)node.className=cls;return node};
+const textNode=(text,tag='p')=>{const node=el(tag);node.textContent=String(text??'');return node};
+
+const INTRINSIC_NODE_TYPES = new Set([
+  'button','link','badge','heading','text','quote','divider','spacer','icon','spinner',
+  'progress','counter','rating','image','language-switcher','back-to-top','download','social-links',
+  'notice','notice-bar','callout','stat-card','icon-text','tag','chip','alert'
+]);
+// Eight familiar resize grips make direct manipulation predictable: each side
+// changes one axis and each corner changes both axes.
+const EDITOR_RESIZE_EDGES = [
+  ['n','تغيير الارتفاع من الأعلى'],['e','تغيير العرض من اليمين'],
+  ['s','تغيير الارتفاع من الأسفل'],['w','تغيير العرض من اليسار'],
+  ['ne','تغيير الحجم من أعلى اليمين'],['nw','تغيير الحجم من أعلى اليسار'],
+  ['se','تغيير الحجم من أسفل اليمين'],['sw','تغيير الحجم من أسفل اليسار']
+];
+function editorPositionFor(node,device){
+  const raw=node?.editorPosition;
+  if(!raw||typeof raw!=='object')return {x:0,y:0};
+  const entry=raw[device]&&typeof raw[device]==='object'?raw[device]:(device==='desktop'?raw:null);
+  const limit=10000;
+  const number=value=>Number.isFinite(Number(value))?Math.max(-limit,Math.min(limit,Number(value))):0;
+  return {x:number(entry?.x),y:number(entry?.y)};
+}
+function resourceUrl(value,kind='image',ctx={}){
+  const raw=String(value??'').trim();if(!raw)return '';
+  if(ctx.export&&ctx.resourceMap?.has(raw))return ctx.resourceMap.get(raw);
+  return safeMediaUrl(raw,kind)||'';
+}
+function rewriteCssResources(css,resourceMap){
+  if(!(resourceMap instanceof Map)||!resourceMap.size)return String(css??'');
+  return String(css??'').replace(/url\(\s*(['\"]?)(.*?)\1\s*\)/gi,(whole,quote,raw)=>{
+    const key=String(raw||'').trim();const local=resourceMap.get(key);
+    return `url(\"${String(local||key).replace(/\"/g,'%22')}\")`;
+  });
+}
+function appendResizeHandles(wrapper,node){
+  for(const [edge,label] of EDITOR_RESIZE_EDGES){
+    const handle=el('button','node-resize-handle');
+    handle.type='button';handle.dataset.resizeEdge=edge;
+    handle.setAttribute('aria-label',`${label} للعنصر ${node.props?.label||node.props?.title||node.type}`);
+    handle.setAttribute('title',label);
+    handle.setAttribute('tabindex','-1');
+    wrapper.appendChild(handle);
+  }
+}
+function wrap(node,ctx){
+  const semanticTag=node.semantic?.tag&&/^[a-z][a-z0-9-]*$/i.test(node.semantic.tag)?node.semantic.tag:'div';
+  const w=el(semanticTag,'node-wrap');
+  w.dataset[ctx.export?'runtimeId':'nodeId']=node.id;
+  w.dataset.bunaaType=node.type;
+  if(node.locked)w.dataset.locked='1';
+  if(ctx.device&&node.visibility&&node.visibility[ctx.device]===false)w.hidden=true;
+  if(!ctx.export){w.dataset.type=node.type;w.dataset.label=node.props?.label||node.props?.title||node.props?.text||node.type;w.dataset.editorResizable='1'}
+  for(const cls of node.classes||[])w.classList.add(String(cls));
+  for(const [key,value] of Object.entries(node.attrs||{})){if(value!=null)w.setAttribute(key,String(value))}
+  if(node.semantic?.role)w.setAttribute('role',node.semantic.role);
+  if(node.semantic?.ariaLabel)w.setAttribute('aria-label',node.semantic.ariaLabel);
+  const resolvedStyle=resolveStyle(node,ctx.device,ctx.theme,ctx.styleLibrary,ctx.project);
+  const devicePatch=node.responsive?.[ctx.device]||{};
+  const explicitWidth=(devicePatch.width??node.style?.width);
+  const explicitHeight=(devicePatch.height??node.style?.height);
+  const hasExplicitWidth=explicitWidth!==undefined&&explicitWidth!==null&&explicitWidth!=='';
+  const hasExplicitHeight=explicitHeight!==undefined&&explicitHeight!==null&&explicitHeight!=='';
+  if(resolvedStyle.width!=null)w.style.width=String(resolvedStyle.width);
+  else if(INTRINSIC_NODE_TYPES.has(node.type))w.style.width='fit-content';
+  else w.style.width='100%';
+  if(resolvedStyle.height!=null)w.style.height=String(resolvedStyle.height);
+  const position=editorPositionFor(node,ctx.device||'desktop');
+  if(position.x||position.y)w.style.transform=`translate3d(${position.x}px, ${position.y}px, 0)`;
+  if(hasExplicitWidth||hasExplicitHeight)w.dataset.explicitSize='1';
+  const content=el('div','node-content');
+  content.dataset.bunaaContent='1';
+  content.style.cssText=ctx.export?rewriteCssResources(styleObjectToCss(resolvedStyle),ctx.resourceMap):styleObjectToCss(resolvedStyle);
+  renderContent(content,node,ctx);
+  if(!node.children?.length&&(hasExplicitWidth||hasExplicitHeight)){
+    for(const child of content.children){
+      if(hasExplicitWidth)child.style.width='100%';
+      if(hasExplicitHeight)child.style.height='100%';
+      child.style.boxSizing='border-box';
+    }
+  }
+  for(const child of node.children||[])content.appendChild(wrap(child,ctx));
+  w.appendChild(content);
+  if(!ctx.export&&ctx.selectedId===node.id){w.classList.add('selected');appendResizeHandles(w,node)}
+  return w;
+}
+
+function boundValue(node,ctx,key,fallback=''){const variable=node?.props?.bindingVariable;if(variable&&ctx.project?.variables){const source=ctx.project.variables[variable];if(source&&Object.prototype.hasOwnProperty.call(source,'value'))return String(source.value)}return String(node?.props?.[key]??fallback)}
+
+function assetSrc(node,kind,ctx){
+  const asset=findAsset(ctx.project,node?.props?.assetId);
+  if(asset){
+    if(ctx.export&&ctx.assetMap?.get(asset.id))return ctx.assetMap.get(asset.id);
+    const raw=asset.data||asset.url||'';
+    return resourceUrl(raw,kind,ctx)||resourceUrl(asset.url,kind,ctx)||'';
+  }
+  const raw=node?.props?.src||node?.props?.url||'';
+  return resourceUrl(raw,kind,ctx)||'';
+}
+
+function pageHref(page,ctx){if(!page)return '#';if(ctx.export&&ctx.pageMap)return ctx.pageMap.get(page.id)||'#';return pageAnchor(page.id)}
+function resolveHref(url,ctx){const target=resolvePageTarget(url,ctx.project);return target?pageHref(target,ctx):safeUrl(url||'#')}
+
+function renderContent(root,node,ctx){const p=node.props||{};switch(node.type){
+case'heading':root.appendChild(textNode(boundValue(node,ctx,'text','عنوان'),'h2'));break;
+case'text':root.appendChild(textNode(boundValue(node,ctx,'text','نص')));break;
+case'button':{const a=el('a','built-button');a.textContent=boundValue(node,ctx,'text','زر');a.href=resolveHref(p.url,ctx);a.dataset.action=p.action||'url';const target=resolvePageTarget(p.url,ctx.project);if(target)a.dataset.pageTarget=target.id;if(p.newTab)a.target='_blank';root.appendChild(a);break}
+case'link':{const a=el('a');a.textContent=boundValue(node,ctx,'text','رابط');a.href=resolveHref(p.url,ctx);const target=resolvePageTarget(p.url,ctx.project);if(target)a.dataset.pageTarget=target.id;root.appendChild(a);break}
+case'image':{
+  const img=el('img');const raw=p.bindingVariable?boundValue(node,ctx,'src',p.src):p.src;
+  img.src=assetSrc(node,'image',ctx)||resourceUrl(raw,'image',ctx)||placeholder();
+  img.alt=p.alt||'';img.loading='lazy';img.decoding='async';
+  const size={...(node.style||{}),...(node.responsive?.[ctx.device]||{})};const hasHeight=size.height!==undefined&&size.height!==null&&size.height!=='';
+  img.style.width='100%';img.style.maxWidth='100%';img.style.minWidth='0';img.style.height=hasHeight?'100%':'auto';
+  img.style.objectFit=String(size.objectFit||p.objectFit||(hasHeight?'cover':'contain'));
+  img.style.objectPosition=String(size.objectPosition||p.objectPosition||'center');img.style.aspectRatio=String(p.aspectRatio||'auto');
+  img.style.objectPosition=String(size.objectPosition||p.objectPosition||'center');
+  img.style.display='block';root.appendChild(img);break;
+}
+case'gallery':{
+  const gallery=el('div','built-gallery');const supplied=Array.isArray(p.images)?p.images:Array.isArray(p.items)?p.items:[];const count=Math.max(1,Math.min(12,Number(p.count)||supplied.length||6));
+  for(let i=0;i<count;i++){const entry=supplied[i];const src=typeof entry==='string'?entry:(entry?.src||entry?.image||'');const img=el('img');img.src=resourceUrl(src,'image',ctx)||placeholder(`صورة ${i+1}`);img.alt=(typeof entry==='object'&&entry?.alt)||`صورة ${i+1}`;img.loading='lazy';img.decoding='async';img.style.width='100%';img.style.height='100%';img.style.objectFit='cover';gallery.appendChild(img)}root.appendChild(gallery);break;
+}
+case'quote':root.appendChild(textNode(p.text||'اقتباس','blockquote'));break;
+case'list':{const ul=el('ul');String(p.items||'').split(/\n+/).filter(Boolean).forEach(x=>ul.appendChild(textNode(x,'li')));root.appendChild(ul);break}
+case'divider':root.appendChild(el('hr'));break;
+case'spacer':root.appendChild(el('div'));break;
+case'section':case'container':case'grid':case'columns':case'stack':case'spaced':case'group':case'hero':break;
+case'card':{const c=el('div','built-card');c.append(textNode(p.title||'بطاقة','h3'),textNode(p.text||'وصف مختصر'));if(p.button){const a=el('a');a.href=resolveHref(p.url,ctx);a.textContent=p.button;if(resolvePageTarget(p.url,ctx.project))a.dataset.pageTarget=resolvePageTarget(p.url,ctx.project).id;c.appendChild(a)}root.appendChild(c);break}
+case'navbar':{const nav=el('nav','built-nav');nav.appendChild(textNode(p.brand||ctx.project.site?.brand?.name||'الموقع','strong'));const links=el('div','nav-links');const menuId=p.menuId||ctx.project.navigation?.headerMenuId;const menu=ctx.project.navigation?.menus?.find(item=>item.id===menuId);const items=Array.isArray(menu?.items)&&menu.items.length?menu.items:(Array.isArray(p.links)?p.links.map((label,index)=>({label,targetId:p.linkTargets?.[index]})):[]);items.forEach((item,index)=>{const a=el('a');a.textContent=item.label||item.name||`رابط ${index+1}`;const target=ctx.project.pages.find(pg=>pg.id===item.targetId)||ctx.project.pages.find(pg=>pg.name===a.textContent)||ctx.project.pages[index]||ctx.project.pages[0];a.href=item.type==='url'?safeUrl(item.url||'#'):pageHref(target,ctx);if(item.newTab)a.target='_blank';links.appendChild(a)});nav.appendChild(links);root.appendChild(nav);break}
+case'footer':{const f=el('footer');f.append(textNode(p.brand||'الموقع','strong'),textNode(p.text||''));root.appendChild(f);break}
+case'alert':root.appendChild(textNode(p.text||'تنبيه'));break;
+case'badge':root.appendChild(textNode(p.text||'جديد','span'));break;
+case'progress':{const bar=el('div','built-progress'),fill=el('div'),value=Math.max(0,Math.min(100,Number(p.value)||0));fill.style.width=`${value}%`;bar.append(fill,textNode(p.label||`${value}%`));root.appendChild(bar);break}
+case'stats':{const g=el('div','built-stats');(p.items||[]).forEach(([v,l])=>{const d=el('div');d.append(textNode(v,'strong'),textNode(l));g.appendChild(d)});root.appendChild(g);break}
+case'timeline':{const g=el('div','built-timeline');(p.items||[]).forEach(([v,l])=>{const d=el('div');d.append(textNode(v,'strong'),textNode(l));g.appendChild(d)});root.appendChild(g);break}
+case'pricing':{const g=el('div','built-pricing');(p.plans||[]).forEach(([n,v])=>{const d=el('div');d.append(textNode(n,'h3'),textNode(v,'strong'));g.appendChild(d)});root.appendChild(g);break}
+case'testimonial':{const d=el('div','built-testimonial');d.append(textNode(`“${p.quote||''}”`),textNode(p.name||'عميل','strong'));root.appendChild(d);break}
+case'tabs':{const g=el('div','built-tabs');const items=p.items||[];const bar=el('div','built-tab-buttons');items.forEach((item,i)=>{const b=el('button');b.type='button';b.dataset.tabIndex=String(i);b.textContent=item;if(i===0)b.classList.add('active');bar.appendChild(b)});const panels=el('div','built-tab-panels');items.forEach((item,i)=>{const panel=textNode(p.panelContents?.[i]||`محتوى ${item}`);panel.className='tab-panel';panel.dataset.tabPanel=String(i);panel.hidden=i!==0;panels.appendChild(panel)});g.append(bar,panels);root.appendChild(g);break}
+case'accordion':{const g=el('div','built-accordion');(p.items||[]).forEach(q=>{const d=el('details');d.append(textNode(q,'summary'),textNode('أضف الإجابة من التخصيص.'));g.appendChild(d)});root.appendChild(g);break}
+case'dropdown':{const s=el('select');(p.items||[]).forEach(x=>s.appendChild(textNode(x,'option')));root.appendChild(s);break}
+case'input':case'search':case'file':{const label=textNode(p.label||'حقل','label'),input=el('input');input.type=node.type==='search'?'search':node.type==='file'?'file':(p.type||'text');input.placeholder=p.placeholder||'';root.append(label,input);break}
+case'textarea':{root.append(textNode(p.label||'رسالة','label'),Object.assign(el('textarea'),{placeholder:p.placeholder||''}));break}
+case'select':{root.append(textNode(p.label||'اختيار','label'));const s=el('select');(p.items||[]).forEach(x=>s.appendChild(textNode(x,'option')));root.appendChild(s);break}
+case'checkbox':case'radio':{const label=el('label');const input=el('input');input.type=node.type;label.append(input,textNode(p.label||'اختيار'));root.appendChild(label);break}
+case'form':{const f=el('form','built-form');f.noValidate=true;f.addEventListener('submit',e=>e.preventDefault());f.appendChild(textNode(p.submitLabel||'النموذج','strong'));root.appendChild(f);break;}
+case'video':{const src=assetSrc(node,'video',ctx)||safeMediaUrl(p.url,'video');if(/^data:video\//i.test(src)||findAsset(ctx.project,p.assetId)?.kind==='video'){const video=el('video');video.controls=true;video.playsInline=true;video.preload='metadata';video.src=src;video.title=p.title||'فيديو';if(p.poster)video.poster=resourceUrl(p.poster,'image',ctx)||p.poster;root.appendChild(video)}else{const iframe=el('iframe');iframe.src=src;iframe.title=p.title||'فيديو';iframe.loading='lazy';root.appendChild(iframe)}break}
+case'audio':{const audio=el('audio');audio.controls=true;const src=assetSrc(node,'audio',ctx);if(src)audio.src=src;root.appendChild(audio);break}
+case'table':{const table=el('table'),thead=el('thead'),tr=el('tr');(p.headers||[]).forEach(h=>tr.appendChild(textNode(h,'th')));thead.appendChild(tr);const tbody=el('tbody');(p.rows||[]).forEach(row=>{const r=el('tr');row.forEach(v=>r.appendChild(textNode(v,'td')));tbody.appendChild(r)});table.append(thead,tbody);root.appendChild(table);break}
+case'chart':{const g=el('div','built-chart');(p.values||[40,60,80]).forEach(v=>{const b=el('i');b.style.height=`${Math.max(10,Math.min(100,Number(v)||0))}%`;g.appendChild(b)});root.appendChild(g);break}
+case'calendar':root.appendChild(textNode(p.month||'هذا الشهر','div'));break;
+case'product':{const c=el('div','built-product');c.append(textNode(p.name||'منتج','h3'),textNode(`${p.price||''} ${p.currency||''}`,'strong'));const a=el('a');a.href=resolveHref(p.url,ctx);a.textContent=p.cta||'اختيار';c.appendChild(a);root.appendChild(c);break}
+case'faq':{const d=el('details','built-faq');d.append(textNode(p.question||'سؤال','summary'),textNode(p.answer||''));root.appendChild(d);break}
+case'rating':root.appendChild(textNode('★'.repeat(Math.max(0,Math.min(5,Number(p.value)||0))),'div'));break;
+case'counter':root.appendChild(textNode(`${p.value||0}${p.suffix||''}`,'div'));break;
+case'social':{const g=el('div','built-social');(p.items||[]).forEach(x=>{const a=el('a');a.href=safeUrl(p.urls?.[x]||'#');a.textContent=x;g.appendChild(a)});root.appendChild(g);break}
+case'gradient':case'glass':case'marquee':root.appendChild(textNode(p.text||''));break;
+case'richtext':{const d=el('div','richtext');d.textContent=String(p.text||p.html||'');root.appendChild(d);break}
+case'avatar':{const img=el('img','built-avatar');img.src=resourceUrl(p.src,'image',ctx)||placeholder(p.name||'ش');img.alt=p.name||'';img.style.width='100%';img.style.maxWidth='100%';img.style.height='100%';img.style.objectFit=String(p.objectFit||'cover');img.style.display='block';root.appendChild(img);root.appendChild(textNode(p.name||'اسم','strong'));break}
+case'logo':{const d=el('div','built-logo');if(p.src){const img=el('img');img.src=resourceUrl(p.src,'image',ctx);img.alt=p.text||'';img.style.width='100%';img.style.maxWidth='100%';img.style.height='100%';img.style.objectFit=String(p.objectFit||'contain');img.style.display='block';d.appendChild(img)}else d.append(textNode(p.text||ctx.project.site?.brand?.name||'العلامة','strong'));root.appendChild(d);break}
+case'breadcrumbs':{const nav=el('nav','built-breadcrumbs');(p.items||ctx.project.pages.map(pg=>pg.name)).forEach((label,i,arr)=>{const span=textNode(label,'span');if(i<arr.length-1)span.append(' › ');nav.appendChild(span)});root.appendChild(nav);break}
+case'chip-list':{const d=el('div','built-chips');(p.items||['ميزة','جديد','شائع']).forEach(x=>d.appendChild(textNode(x,'span')));root.appendChild(d);break}
+case'feature-list':{const d=el('div','built-feature-list');(p.items||[['ميزة','وصف مختصر'],['ميزة ثانية','وصف مختصر']]).forEach(([title,desc])=>{const item=el('div');item.append(textNode('✓','strong'),textNode(title,'h3'),textNode(desc));d.appendChild(item)});root.appendChild(d);break}
+case'team':{const d=el('div','built-team');(p.items||[['أحمد','مدير'],['سارة','مصممة'],['علي','مطور']]).forEach(([name,role])=>{const item=el('div');item.appendChild(textNode(name,'strong'));item.appendChild(textNode(role));d.appendChild(item)});root.appendChild(d);break}
+
+case'stepper':{const d=el('ol','built-stepper');(p.items||[['01','ابدأ'],['02','صمّم'],['03','أطلق']]).forEach(([n,label])=>{const item=el('li');item.append(textNode(n,'strong'),textNode(label));d.appendChild(item)});root.appendChild(d);break}
+case'code':{const pre=el('pre');pre.textContent=p.code||'// اكتب الكود هنا';root.appendChild(pre);break}
+case'embed':{const iframe=el('iframe');iframe.src=safeUrl(p.url||'');iframe.title=p.title||'مضمن';iframe.loading='lazy';root.appendChild(iframe);break}
+case'collection-list':{const d=el('div','built-collection-list');const items=getCollectionItems(ctx.project,p.collectionId).slice(0,Math.max(1,Math.min(50,Number(p.limit)||6)));items.forEach(item=>{const card=el('article','cms-card');const title=item.data?.title||item.slug||'عنصر';card.appendChild(textNode(title,'h3'));if(item.data?.image){const img=el('img');img.src=resourceUrl(item.data.image,'image',ctx)||placeholder(title);img.alt=title;img.loading='lazy';img.style.maxWidth='100%';card.appendChild(img)}if(item.data?.body)card.appendChild(textNode(item.data.body));d.appendChild(card)});if(!items.length)d.appendChild(textNode('لا توجد عناصر محتوى بعد.'));root.appendChild(d);break}
+case'schedule':{const d=el('div','built-schedule');(p.items||[['09:00','موعد']]).forEach(([time,title])=>{const item=el('div');item.append(textNode(time,'strong'),textNode(title));d.appendChild(item)});root.appendChild(d);break}
+case'icon-text':{const d=el('div','built-icon-text');d.append(textNode(p.icon||'✦','strong'),textNode(p.title||'ميزة','h3'),textNode(p.text||''));root.appendChild(d);break}
+case'image-text':{const d=el('div','built-image-text');const img=el('img');img.src=resourceUrl(p.image,'image',ctx)||placeholder();img.alt=p.title||'';img.loading='lazy';img.style.width='100%';img.style.maxWidth='100%';img.style.objectFit=String(p.objectFit||'cover');const copy=el('div');copy.append(textNode(p.title||'عنوان','h3'),textNode(p.text||''));d.append(img,copy);root.appendChild(d);break}
+case'hero-split':{const d=el('section','built-hero-split');const copy=el('div','built-hero-copy');copy.append(textNode(p.eyebrow||'اكتشف ما يمكنك بناؤه','small'),textNode(p.title||'حوّل فكرتك إلى تجربة واضحة','h1'),textNode(p.text||'قسم افتتاحي بصورة ورسالة واضحة ودعوة لإجراء.'));if(p.button){const a=el('a','built-button');a.href=resolveHref(p.url||'#',ctx);a.textContent=p.button;if(p.newTab){a.target='_blank';a.rel='noopener noreferrer'}copy.appendChild(a)}const media=el('div','built-hero-media');const img=el('img');img.src=resourceUrl(p.image,'image',ctx)||placeholder(p.title||'صورة');img.alt=p.imageAlt||p.title||'';img.loading='lazy';img.decoding='async';img.style.width='100%';img.style.height='100%';img.style.objectFit=String(p.objectFit||'cover');media.appendChild(img);d.append(copy,media);root.appendChild(d);break}
+case'blog-grid':{const d=el('div','built-blog-grid');for(const item of (p.items||[])){const card=el('article','built-content-card');const image=el('img');image.src=resourceUrl(item.image||item.src,'image',ctx)||placeholder(item.title||'مقال');image.alt=item.title||'';image.loading='lazy';image.decoding='async';card.appendChild(image);const body=el('div','built-content-card-body');if(item.category)body.appendChild(textNode(item.category,'small'));body.appendChild(textNode(item.title||'عنوان المقال','h3'));body.appendChild(textNode(item.excerpt||item.text||'نبذة مختصرة تساعد الزائر على معرفة المحتوى.'));const a=el('a','built-inline-link');a.href=resolveHref(item.url||'#',ctx);a.textContent=item.cta||'اقرأ المقال';body.appendChild(a);card.appendChild(body);d.appendChild(card)}root.appendChild(d);break}
+case'product-grid':{const d=el('div','built-product-grid');(p.items||[]).forEach((item,index)=>{const card=el('article','built-product-listing');const image=el('img');image.src=resourceUrl(item.image||item.src,'image',ctx)||placeholder(item.name||'منتج');image.alt=item.name||'';image.loading='lazy';image.decoding='async';card.appendChild(image);if(item.badge)card.appendChild(textNode(item.badge,'small'));card.appendChild(textNode(item.name||`منتج ${index+1}`,'h3'));card.appendChild(textNode(item.description||''));const price=textNode(item.price||'اطلب السعر','strong');price.className='built-product-price';card.appendChild(price);const row=el('div','built-product-actions');const link=el('a','built-button');link.href=resolveHref(item.url||'#',ctx);link.textContent=item.cta||'التفاصيل';row.appendChild(link);const add=el('button','built-cart-add');add.type='button';add.dataset.cartAdd=String(item.id||index);add.dataset.cartName=String(item.name||`منتج ${index+1}`);add.textContent=p.cartLabel||'أضف للسلة';row.appendChild(add);card.appendChild(row);d.appendChild(card)});root.appendChild(d);break}
+case'portfolio-grid':case'filterable-gallery':{const d=el('section','built-portfolio');const items=Array.isArray(p.items)?p.items:[];const cats=['الكل',...new Set(items.map(item=>String(item.category||'أخرى')).filter(Boolean))];const filters=el('div','built-portfolio-filters');cats.forEach((cat,i)=>{const button=el('button');button.type='button';button.dataset.portfolioFilter=cat;button.setAttribute('aria-pressed',i===0?'true':'false');button.textContent=cat;filters.appendChild(button)});const grid=el('div','built-portfolio-grid');items.forEach((item,index)=>{const card=el('a','built-portfolio-item');card.href=resolveHref(item.url||'#',ctx);card.dataset.portfolioCategory=String(item.category||'أخرى');card.setAttribute('aria-label',item.title||`عمل ${index+1}`);const image=el('img');image.src=resourceUrl(item.image||item.src,'image',ctx)||placeholder(item.title||'عمل');image.alt=item.title||'';image.loading='lazy';image.decoding='async';card.append(image);const label=el('span');label.append(textNode(item.title||`عمل ${index+1}`,'strong'),textNode(item.category||'أعمال'));card.appendChild(label);grid.appendChild(card)});d.append(filters,grid);root.appendChild(d);break}
+case'testimonial-carousel':{const d=el('section','built-testimonial-carousel');const items=Array.isArray(p.items)&&p.items.length?p.items:[{quote:'تجربة ممتازة وواضحة.',name:'عميل',role:'مستخدم'}];d.dataset.carouselCount=String(items.length);const cards=el('div','built-testimonial-slides');items.forEach((item,index)=>{const card=el('blockquote','built-testimonial-slide');card.dataset.carouselSlide=String(index);card.hidden=index!==0;card.append(textNode(`“${item.quote||item.text||''}”`,'p'),textNode(item.name||'عميل','strong'));if(item.role)card.appendChild(textNode(item.role,'small'));cards.appendChild(card)});const controls=el('div','built-carousel-controls');const prev=el('button');prev.type='button';prev.dataset.carouselMove='-1';prev.setAttribute('aria-label','الشهادة السابقة');prev.textContent='→';const status=textNode(`1 / ${items.length}`,'span');status.dataset.carouselStatus='';const next=el('button');next.type='button';next.dataset.carouselMove='1';next.setAttribute('aria-label','الشهادة التالية');next.textContent='←';controls.append(prev,status,next);d.append(cards,controls);root.appendChild(d);break}
+case'contact-form':{const d=el('section','built-contact-form');d.append(textNode(p.title||'تواصل معنا','h2'));if(p.text)d.appendChild(textNode(p.text));const form=el('form');form.dataset.localContactForm='1';const name=el('input');name.name='name';name.placeholder=p.namePlaceholder||'الاسم';name.autocomplete='name';name.required=true;name.setAttribute('aria-label','الاسم');const email=el('input');email.name='email';email.type='email';email.placeholder=p.emailPlaceholder||'البريد الإلكتروني';email.autocomplete='email';email.required=true;email.setAttribute('aria-label','البريد الإلكتروني');const message=el('textarea');message.name='message';message.placeholder=p.messagePlaceholder||'كيف يمكننا مساعدتك؟';message.required=true;message.setAttribute('aria-label','الرسالة');const submit=el('button','built-button');submit.type='submit';submit.textContent=p.button||'إرسال';const status=el('p','built-form-status');status.setAttribute('role','status');status.dataset.formStatus='1';status.setAttribute('aria-live','polite');form.append(name,email,message,submit,status);d.appendChild(form);root.appendChild(d);break}
+case'process-steps':{const d=el('ol','built-process-steps');(p.items||[]).forEach((item,index)=>{const step=el('li');step.appendChild(textNode(String(index+1).padStart(2,'0'),'strong'));step.appendChild(textNode(item.title||item.name||`الخطوة ${index+1}`,'h3'));step.appendChild(textNode(item.description||item.text||''));d.appendChild(step)});root.appendChild(d);break}
+case'trust-bar':{const d=el('section','built-trust-bar');if(p.title)d.appendChild(textNode(p.title,'p'));const logos=el('div','built-trust-logos');(p.items||[]).forEach(item=>{const value=typeof item==='string'?item:(item.name||item.label||item.value||'');logos.appendChild(textNode(value,'strong'))});d.appendChild(logos);if(p.rating)d.appendChild(textNode(`★ ${p.rating} / 5`,'span'));root.appendChild(d);break}
+case'faq-list':{const d=el('section','built-faq-list');if(p.title)d.appendChild(textNode(p.title,'h2'));(p.items||[]).forEach(item=>{const details=el('details');const summary=textNode(item.question||item.title||'سؤال','summary');details.appendChild(summary);details.appendChild(textNode(item.answer||item.text||''));d.appendChild(details)});root.appendChild(d);break}
+case'team-grid':{const d=el('section','built-team-grid');if(p.title)d.appendChild(textNode(p.title,'h2'));const grid=el('div','built-team-items');(p.items||[]).forEach(item=>{const card=el('article','built-team-card');if(item.image){const img=el('img');img.src=resourceUrl(item.image,'image',ctx)||placeholder(item.name||'عضو');img.alt=item.name||'';img.loading='lazy';img.decoding='async';card.appendChild(img)}card.append(textNode(item.name||'عضو الفريق','h3'),textNode(item.role||'','small'),textNode(item.bio||item.description||''));if(item.url&&item.url!=='#'){const a=el('a','built-button');a.href=resolveHref(item.url,ctx);a.textContent='الملف الشخصي';card.appendChild(a)}grid.appendChild(card)});d.appendChild(grid);root.appendChild(d);break}
+case'service-grid':{const d=el('section','built-service-grid');if(p.title)d.appendChild(textNode(p.title,'h2'));const grid=el('div','built-service-items');(p.items||[]).forEach(item=>{const card=el('article','built-service-card');card.append(textNode(item.icon||'✦','span'),textNode(item.title||'خدمة','h3'),textNode(item.description||item.text||''));if(item.url){const a=el('a');a.href=resolveHref(item.url,ctx);a.textContent=item.button||'اعرف المزيد';card.appendChild(a)}grid.appendChild(card)});d.appendChild(grid);root.appendChild(d);break}
+case'feature-bento':{const d=el('section','built-feature-bento');if(p.title)d.appendChild(textNode(p.title,'h2'));const grid=el('div','built-bento-items');(p.items||[]).forEach((item,index)=>{const card=el('article','built-bento-card');card.dataset.bentoIndex=String(index);if(item.image){const img=el('img');img.src=resourceUrl(item.image,'image',ctx)||placeholder(item.title||'ميزة');img.alt=item.title||'';img.loading='lazy';img.decoding='async';card.appendChild(img)}card.append(textNode(item.title||'ميزة','h3'),textNode(item.description||item.text||''));if(item.url){const a=el('a');a.href=resolveHref(item.url,ctx);a.textContent='استكشف';card.appendChild(a)}grid.appendChild(card)});d.appendChild(grid);root.appendChild(d);break}
+case'logo-cloud':{const d=el('section','built-logo-cloud');if(p.title)d.appendChild(textNode(p.title,'h2'));const grid=el('div','built-logo-cloud-items');(p.items||[]).forEach(item=>{const obj=typeof item==='string'?{name:item}:item||{},a=el(obj.url?'a':'span','built-logo-cloud-item');if(obj.url)a.href=resolveHref(obj.url,ctx);if(obj.image){const img=el('img');img.src=resourceUrl(obj.image,'image',ctx)||placeholder(obj.name||'شعار');img.alt=obj.name||'';img.loading='lazy';a.appendChild(img)}else a.appendChild(textNode(obj.name||obj.label||'شريك','strong'));grid.appendChild(a)});d.appendChild(grid);root.appendChild(d);break}
+case'event-list':{const d=el('section','built-event-list');if(p.title)d.appendChild(textNode(p.title,'h2'));(p.items||[]).forEach(item=>{const card=el('article','built-event-card');const date=textNode(item.date||'التاريخ يحدد لاحقًا','strong');date.className='built-event-date';const content=el('div');content.append(textNode(item.title||'فعالية','h3'),textNode(item.description||''),textNode(item.location||''));card.append(date,content);if(item.url){const a=el('a','built-button');a.href=resolveHref(item.url,ctx);a.textContent=item.button||'تفاصيل الفعالية';card.appendChild(a)}d.appendChild(card)});root.appendChild(d);break}
+case'review-grid':{const d=el('section','built-review-grid');if(p.title)d.appendChild(textNode(p.title,'h2'));const grid=el('div','built-review-items');(p.items||[]).forEach(item=>{const card=el('blockquote','built-review-card');card.appendChild(textNode('★'.repeat(Math.min(5,Math.max(1,Number(item.rating)||5))),'div'));card.append(textNode(item.quote||item.text||'','p'),textNode(item.name||'عميل','strong'));if(item.company)card.appendChild(textNode(item.company,'small'));grid.appendChild(card)});d.appendChild(grid);root.appendChild(d);break}
+case'job-board':{const d=el('section','built-job-board');if(p.title)d.appendChild(textNode(p.title,'h2'));(p.items||[]).forEach(item=>{const card=el('article','built-job-card');const body=el('div');body.append(textNode(item.title||'فرصة عمل','h3'),textNode([item.location,item.type].filter(Boolean).join(' • '),'small'),textNode(item.description||''));card.appendChild(body);const a=el('a','built-button');a.href=resolveHref(item.url||'#',ctx);a.textContent=item.button||'التقديم';card.appendChild(a);d.appendChild(card)});root.appendChild(d);break}
+case'feature-grid':{const d=el('div','built-feature-grid');(p.items||[]).forEach(([title,desc])=>{const card=el('article');card.append(textNode(title,'h3'),textNode(desc));d.appendChild(card)});root.appendChild(d);break}
+case'contact-card':{const d=el('address','built-contact-card');d.append(textNode(p.title||'تواصل معنا','h3'),textNode(p.email||''),textNode(p.phone||''),textNode(p.address||''));root.appendChild(d);break}
+case'stat-card':{const d=el('div','built-stat-card');d.append(textNode(p.value||'0','strong'),textNode(p.label||''),textNode(p.trend||''));root.appendChild(d);break}
+case'pricing-card':{const d=el('article','built-pricing-card');d.append(textNode(p.name||'خطة','h3'),textNode(p.price||''),textNode(p.period||''));const ul=el('ul');(p.features||[]).forEach(x=>ul.appendChild(textNode(x,'li')));d.appendChild(ul);const b=el('a','built-button');b.href=resolveHref(p.url,ctx);b.textContent=p.button||'ابدأ';d.appendChild(b);root.appendChild(d);break}
+case'testimonial-card':{const d=el('blockquote','built-testimonial-card');d.append(textNode(`“${p.quote||''}”`),textNode(`${p.name||'عميل'}${p.role?' — '+p.role:''}`,'cite'));root.appendChild(d);break}
+case'logo-row':{const d=el('div','built-logo-row');(p.items||[]).forEach(x=>d.appendChild(textNode(x,'strong')));root.appendChild(d);break}
+case'social-links':{const d=el('div','built-social-links');(p.items||[]).forEach(([name,url])=>{const a=el('a');a.href=safeUrl(url||'#');a.textContent=name;d.appendChild(a)});root.appendChild(d);break}
+case'download':{const a=el('a','built-button');a.href=assetSrc(node,'document',ctx)||safeUrl(p.url||'#');a.download=p.filename||findAsset(ctx.project,p.assetId)?.filename||'';a.textContent=p.text||'تحميل';root.appendChild(a);break}
+case'map':{const d=el('div','built-map');d.append(textNode(p.title||'الموقع','h3'),textNode(p.address||'حدد الموقع من الخصائص.'),textNode(`${p.lat||''}, ${p.lng||''}`));root.appendChild(d);break}
+case'back-to-top':{const b=el('button','built-button');b.type='button';b.dataset.backToTop='1';b.textContent=p.text||'↑ أعلى الصفحة';root.appendChild(b);break}
+case'language-switcher':{const s=el('select','built-language-switcher');(p.languages||['AR','EN']).forEach(x=>s.appendChild(textNode(x,'option')));root.appendChild(s);break}
+case'divider-label':{const d=el('div','built-divider-label');d.append(el('span'),textNode(p.text||'أو'),el('span'));root.appendChild(d);break}
+case'notice-bar':{const d=el('div','built-notice-bar');d.appendChild(textNode(p.text||''));if(p.button){const a=el('a');a.href=resolveHref(p.url,ctx);a.textContent=p.button;d.appendChild(a)}root.appendChild(d);break}
+case'video-card':{const d=el('article','built-video-card');d.append(textNode('▶','strong'),textNode(p.title||'فيديو','h3'),textNode(p.duration||''));root.appendChild(d);break}
+case'compare':case'feature-comparison':{const table=el('table','comparison-table');(p.items||p.rows||[]).forEach((row,ri)=>{const tr=el('tr');row.forEach(cell=>tr.appendChild(textNode(cell,ri===0?'th':'td')));table.appendChild(tr)});root.appendChild(table);break}
+case'callout':{const d=el('aside','built-callout');d.append(textNode(p.title||'ملاحظة','strong'),textNode(p.text||''));root.appendChild(d);break}
+case'spinner':{const d=el('span','built-spinner');d.setAttribute('aria-label','تحميل');root.appendChild(d);break}
+case'countdown':{root.appendChild(textNode(`${p.days||0} يوم • ${p.hours||0} ساعة • ${p.minutes||0} دقيقة`,'div'));break}
+case'cookie-banner':{const d=el('div','built-cookie');d.append(textNode(p.text||''));const b=el('button');b.type='button';b.dataset.cookieDismiss='1';b.textContent=p.accept||'موافق';d.appendChild(b);root.appendChild(d);break}
+case'newsletter':case'lead-form':{const d=el('section',node.type==='newsletter'?'built-newsletter':'built-lead-form');if(p.title)d.appendChild(textNode(p.title,'h3'));if(p.text)d.appendChild(textNode(p.text));const f=el('form');f.dataset.localContactForm='1';if(node.type==='lead-form'){const name=el('input');name.name='name';name.required=true;name.placeholder=p.namePlaceholder||'الاسم';name.setAttribute('aria-label','الاسم');f.appendChild(name)}const email=el('input');email.name='email';email.type='email';email.required=true;email.placeholder=p.placeholder||p.emailPlaceholder||'البريد الإلكتروني';email.setAttribute('aria-label','البريد الإلكتروني');const b=el('button','built-button');b.type='submit';b.textContent=p.button||(node.type==='newsletter'?'اشتراك':'إرسال الطلب');const status=el('p','built-form-status');status.dataset.formStatus='1';status.setAttribute('role','status');status.setAttribute('aria-live','polite');f.append(email,b,status);d.appendChild(f);root.appendChild(d);break}
+case'cta':case'social-proof':case'highlight':case'announcement':case'quote-banner':{const d=el('section',`built-${node.type}`);if(p.title)d.appendChild(textNode(p.title,'h3'));d.appendChild(textNode(p.text||p.label||''));if(p.button){const b=el('a','built-button');b.href=resolveHref(p.url||'#',ctx);b.textContent=p.button;if(p.newTab){b.target='_blank';b.rel='noopener noreferrer'}d.appendChild(b)}root.appendChild(d);break}
+case'symbol-instance':{const symbol=resolveSymbol(ctx.project,p.symbolId);if(symbol?.root&&!ctx.symbolDepth){const rendered=wrap(symbol.root,{...ctx,symbolDepth:(ctx.symbolDepth||0)+1});root.appendChild(rendered)}else if(!symbol?.root){root.appendChild(textNode('مكون مشترك غير موجود.'));}break}
+default:if(p.text)root.appendChild(textNode(p.text));}}
+
+const placeholder=(label='صورة')=>'data:image/svg+xml;charset=utf-8,'+encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="800" height="420"><rect width="800" height="420" fill="#eef0f7"/><rect x="280" y="150" width="240" height="26" rx="13" fill="#5b5ce2" opacity=".25"/><text x="400" y="235" text-anchor="middle" font-family="Arial" font-size="28" fill="#5b5ce2">${label}</text></svg>`);
+function renderPage(page,container,ctx){applyThemeVars(container,ctx.theme||{});container.dataset.pageId=page?.id||'';container.replaceChildren(...(page.nodes||[]).map(node=>wrap(node,ctx)));container.classList.toggle('is-empty',!(page.nodes||[]).length);return container}
+function nodeHtml(node,theme,project,device='desktop',pageMap=null,assetMap=null,resourceMap=null){return wrap(node,{theme,project,styleLibrary:project?.styleLibrary||{},device,selectedId:null,headingTag:'h2',export:true,pageMap,assetMap,resourceMap}).outerHTML}
+exports.renderPage = renderPage;
+exports.nodeHtml = nodeHtml;
+});
+__modules.set("src/engine/routing.js",(exports,__require)=>{
+function pageAnchor(pageId){return `#page-${encodeURIComponent(String(pageId||''))}`}
+function pageFromAnchor(hash,project){const value=String(hash||'');if(!value.startsWith('#page-'))return null;const id=decodeURIComponent(value.slice(6));return project.pages.find(page=>page.id===id)||null}
+function pageFile(project,page,map){return map?.get(page.id)||((page===project.pages[0])?'index.html':`${page.slug||'page'}.html`)}
+function resolvePageTarget(url,project){if(typeof url!=='string'||!url.startsWith('page:'))return null;return project.pages.find(page=>page.id===url.slice(5))||null}
+exports.pageAnchor = pageAnchor;
+exports.pageFromAnchor = pageFromAnchor;
+exports.pageFile = pageFile;
+exports.resolvePageTarget = resolvePageTarget;
+});
+__modules.set("src/engine/site-compiler.js",(exports,__require)=>{
+const {auditProject} = __require("src/engine/quality-audit.js");
+const {pageFileMap} = __require("src/engine/exporter.js");
+function compileSite(project) {
+  const audit = auditProject(project);
+  const map = pageFileMap(project);
+  const diagnostics = { ...audit, blocking: audit.issues.length > 0, generatedAt: new Date().toISOString() };
+  const manifest = {
+    name: project.site?.title || project.meta?.name || 'موقع بَنّاء',
+    short_name: project.meta?.name || 'موقع',
+    start_url: map.get(project.pages?.[0]?.id) || 'index.html',
+    display: 'standalone',
+    lang: project.site?.language || 'ar',
+    dir: project.site?.direction || 'rtl',
+    icons: project.site?.favicon ? [{ src: project.site.favicon, sizes: 'any', type: 'image/png' }] : [],
+  };
+  return { diagnostics, pageMap: map, manifest, robots: robotsTxt(project), sitemap: sitemapXml(project, map) };
+}
+
+function robotsTxt(project) {
+  const policy = project.site?.indexing?.robots || 'index,follow';
+  const disallow = policy.includes('noindex') ? '/' : '';
+  const lines = [`User-agent: *`, `Disallow: ${disallow}`];
+  if (project.site?.baseUrl && project.site?.indexing?.sitemap !== false) lines.push(`Sitemap: ${project.site.baseUrl.replace(/\/$/, '')}/sitemap.xml`);
+  return lines.join('\n');
+}
+
+function sitemapXml(project, map) {
+  const base = String(project.site?.baseUrl || '').replace(/\/$/, '');
+  const urls = (project.pages || []).filter(page => !page.settings?.hidden).map(page => {
+    const href = map.get(page.id) || 'index.html';
+    const loc = base ? `${base}/${href}`.replace(/index\.html$/, '') : href;
+    return `<url><loc>${escapeXml(loc)}</loc></url>`;
+  });
+  return `<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${urls.join('')}</urlset>`;
+}
+function escapeXml(value) { return String(value || '').replace(/[<>&'"]/g, char => ({ '<':'&lt;', '>':'&gt;', '&':'&amp;', "'":'&apos;', '"':'&quot;' }[char])); }
+exports.compileSite = compileSite;
+});
+__modules.set("src/engine/workspace.js",(exports,__require)=>{
+const {renderPage} = __require("src/engine/renderer.js");
+const {createRuntime} = __require("src/engine/interaction.js");
+const {addNode,insertNodeAtDrop} = __require("src/core/commands.js");
+const {clamp} = __require("src/core/utils.js");
+const {pageFromAnchor} = __require("src/engine/routing.js");
+const {findNodeGlobal} = __require("src/core/model.js");
+class WorkspaceEngine{constructor(store,inspector,panels){this.store=store;this.inspector=inspector;this.panels=panels;this.runtimeCleanup=null;this.runtimeKey='';this.wired=false;this.space=false;this.manipulation=null;this.suppressCanvasClickUntil=0;this.didInitialFit=false;this.manuallyZoomed=false;this.isFitting=false}
+mount(){this.pageCanvas=document.getElementById('pageCanvas');this.deviceFrame=document.getElementById('deviceFrame');this.viewport=document.getElementById('canvasViewport');this.stage=document.getElementById('canvasStage');this.host=document.getElementById('canvasStageHost');this.contentHeightFrame=0;this.wireCanvas();this.wireControls();this.resizeObserver=globalThis.ResizeObserver?new ResizeObserver(()=>{this.scheduleContentHeight();this.reflowHost();this.centerStage();if(this.didInitialFit&&!this.manuallyZoomed)requestAnimationFrame(()=>this.fit())}):null;this.resizeObserver?.observe(this.viewport);this.pageCanvas.addEventListener('load',()=>this.scheduleContentHeight(),true)}
+wireCanvas(){
+  if(this.wired)return;
+  this.wired=true;
+  this.pageCanvas.addEventListener('pointerdown',e=>this.beginNodeManipulation(e));
+  // Track the whole gesture at window level so resizing keeps working when a grip
+  // starts at the canvas edge or the pointer crosses into a side drawer.
+  window.addEventListener('pointermove',e=>this.moveNodeManipulation(e),true);
+  window.addEventListener('pointerup',e=>this.finishNodeManipulation(e),true);
+  window.addEventListener('pointercancel',e=>this.cancelNodeManipulation(e),true);
+  this.pageCanvas.addEventListener('lostpointercapture',e=>this.cancelNodeManipulation(e),true);
+  this.wireToolbarMenu();
+  this.pageCanvas.addEventListener('click',e=>{
+    if(Date.now()<this.suppressCanvasClickUntil){e.preventDefault();e.stopPropagation();return}
+    const link=e.target.closest('a');const w=e.target.closest('.node-wrap');
+    if(this.store.ui.interactionMode){
+      if(w){const sourceId=w.dataset.nodeId;const ownsClick=this.store.project.interactions?.some(i=>i.sourceId===sourceId&&i.enabled!==false&&i.trigger==='click');if(ownsClick){if(link)e.preventDefault();return}}
+      if(link){const target=link.dataset.pageTarget||pageFromAnchor(link.getAttribute('href'),this.store.project)?.id;if(target){e.preventDefault();this.store.setActivePage(target);this.store.setUI({leftTab:'elements'});return}}
+      return;
+    }
+    if(e.target.closest('.node-resize-handle')){e.preventDefault();return}
+    if(!w)return;
+    e.preventDefault();this.store.setUI({selected:w.dataset.nodeId,rightOpen:true});
+  });
+  this.pageCanvas.addEventListener('dragover',e=>e.preventDefault());
+  this.pageCanvas.addEventListener('drop',e=>{e.preventDefault();const type=e.dataTransfer.getData('application/bunaa-type');if(!type)return;insertNodeAtDrop(this.store,type,e.target.closest('.node-wrap')?.dataset.nodeId||null);this.panels.setTab('layers')});
+  document.getElementById('dropFooter')?.addEventListener('drop',e=>{e.preventDefault();const type=e.dataTransfer.getData('application/bunaa-type');if(type)this.addElement(type)});
+}
+beginNodeManipulation(e){
+  if(e.button!==0||this.store.ui.interactionMode||this.manipulation)return;
+  if(e.target.closest('input,textarea,select,[contenteditable="true"]'))return;
+  const handle=e.target.closest('.node-resize-handle');
+  const wrapper=handle?.closest('.node-wrap')||e.target.closest('.node-wrap');
+  if(!wrapper||wrapper.dataset.locked==='1')return;
+  const nodeId=wrapper.dataset.nodeId;
+  const found=this.store.find(nodeId);
+  if(!found)return;
+  const rect=wrapper.getBoundingClientRect();
+  const zoom=Math.max(.2,Number(this.store.ui.zoom)||1);
+  const pos=found.node.editorPosition?.[this.store.ui.device]||found.node.editorPosition||{};
+  const style={...(found.node.style||{}),...(found.node.responsive?.[this.store.ui.device]||{})};
+  const content=wrapper.querySelector(':scope > .node-content');
+  this.manipulation={
+    pointerId:e.pointerId,nodeId,pageId:this.store.project.activePageId,wrapper,mode:handle?'resize':'move',edge:handle?.dataset.resizeEdge||'',
+    startClientX:e.clientX,startClientY:e.clientY,startX:Number(pos.x)||0,startY:Number(pos.y)||0,
+    startRectX:rect.left,startRectY:rect.top,
+    startWidth:Math.max(1,rect.width/zoom),startHeight:Math.max(1,rect.height/zoom),
+    startStyleWidth:style.width,startStyleHeight:style.height,
+    startWrapperWidth:wrapper.style.width,startWrapperHeight:wrapper.style.height,startTransform:wrapper.style.transform,
+    content,startContentWidth:content?.style.width||'',startContentHeight:content?.style.height||'',
+    startChildrenStyles:[...(content?.children||[])].map(child=>({child,width:child.style.width,height:child.style.height,boxSizing:child.style.boxSizing})),
+    widthMoved:false,heightMoved:false,moved:false,zoom,device:this.store.ui.device,captureTarget:handle||wrapper
+  };
+  try{m.captureTarget?.setPointerCapture(e.pointerId);m.captureTarget?.addEventListener('lostpointercapture',event=>this.cancelNodeManipulation(event),{once:true})}catch{}
+  if(handle){e.preventDefault();e.stopPropagation()}
+}
+moveNodeManipulation(e){
+  const m=this.manipulation;
+  if(!m||m.pointerId!==e.pointerId)return;
+  const dx=(e.clientX-m.startClientX)/m.zoom,dy=(e.clientY-m.startClientY)/m.zoom;
+  if(!m.moved&&Math.hypot(dx,dy)<3)return;
+  const firstMove=!m.moved;
+  m.moved=true;
+  if(firstMove){try{if(!m.captureTarget?.hasPointerCapture(e.pointerId))m.captureTarget?.setPointerCapture(e.pointerId)}catch{}}
+  const canvasBounds=this.pageCanvas.getBoundingClientRect();
+  if(m.mode==='move'){
+    /* The artboard width is tied to the selected device. Moving nodes never changes
+       the device width; only the user's explicit vertical resize may extend page height. */
+    const currentLeft=(m.startRectX-canvasBounds.left)/m.zoom;
+    const currentTop=(m.startRectY-canvasBounds.top)/m.zoom;
+    const minDx=-Math.max(2000,currentLeft+2000);
+    const maxDx=Math.max(0,50000-currentLeft-m.startWidth);
+    const minDy=-Math.max(2000,currentTop+2000);
+    const maxDy=Math.max(0,50000-currentTop-m.startHeight);
+    const boundedDx=clamp(dx,minDx,maxDx);
+    const boundedDy=clamp(dy,minDy,maxDy);
+    m.x=Math.round(m.startX+boundedDx);
+    m.y=Math.round(m.startY+boundedDy);
+    m.wrapper.style.transform=`translate3d(${m.x}px, ${m.y}px, 0)`;
+    m.wrapper.classList.add('is-manipulating');
+  }else{
+    const minWidth=24,minHeight=20;
+    const west=m.edge.includes('w'),east=m.edge.includes('e');
+    const north=m.edge.includes('n'),south=m.edge.includes('s');
+    m.widthMoved=west||east;m.heightMoved=north||south;
+    // West/north grips keep the opposite edge fixed, rather than resizing from
+    // the top-left and making the element appear to jump under the pointer.
+    if(m.widthMoved){
+      // Keep the artboard fixed to the selected device width. A node may be wider,
+      // but that must not silently widen the page or reposition other nodes.
+      const available=west
+        ?m.startWidth+Math.max(0,(m.startRectX-canvasBounds.left)/m.zoom)
+        :20000;
+      const maxWidth=Math.max(minWidth,Math.min(20000,Math.floor(available)));
+      m.width=Math.round(clamp(m.startWidth+(west?-dx:dx),minWidth,maxWidth));
+    }
+    if(m.heightMoved){
+      const available=north
+        ?m.startHeight+Math.max(0,(m.startRectY-canvasBounds.top)/m.zoom)
+        :20000;
+      const maxHeight=Math.max(minHeight,Math.min(20000,Math.floor(available)));
+      m.height=Math.round(clamp(m.startHeight+(north?-dy:dy),minHeight,maxHeight));
+    }
+    if(m.widthMoved){
+      m.wrapper.style.width=`${m.width}px`;
+      if(m.content){m.content.style.width=`${m.width}px`;if(!m.wrapper.querySelector(':scope > .node-content > .node-wrap'))for(const child of m.content.children){child.style.width='100%';child.style.boxSizing='border-box'}}
+    }
+    if(m.heightMoved){
+      m.wrapper.style.height=`${m.height}px`;
+      if(m.content){m.content.style.height=`${m.height}px`;if(!m.wrapper.querySelector(':scope > .node-content > .node-wrap'))for(const child of m.content.children){child.style.height='100%';child.style.boxSizing='border-box'}}
+    }
+    m.x=west?Math.round(m.startX+m.startWidth-m.width):m.startX;
+    m.y=north?Math.round(m.startY+m.startHeight-m.height):m.startY;
+    if(m.widthMoved||m.heightMoved)m.wrapper.style.transform=`translate3d(${m.x}px, ${m.y}px, 0)`;
+    m.wrapper.classList.add('is-manipulating');
+  }
+  this.scheduleContentHeight();
+  e.preventDefault();
+}
+finishNodeManipulation(e){
+  const m=this.manipulation;
+  if(!m||m.pointerId!==e.pointerId)return;
+  this.manipulation=null;
+  try{if(m.captureTarget?.hasPointerCapture(e.pointerId))m.captureTarget.releasePointerCapture(e.pointerId)}catch{}
+  m.wrapper.classList.remove('is-manipulating');
+  if(!m.moved)return;
+  this.suppressCanvasClickUntil=Date.now()+350;
+  const label=m.mode==='move'?'تحريك عنصر بالماوس':'تغيير حجم عنصر بالماوس';
+  // The canvas height is extended only by an explicit vertical resize, never by
+  // moving a node, changing devices, observing content, or recomputing width.
+  const requestedPageHeight=(m.mode==='resize'&&m.heightMoved)?this.measureResizedNodeBottom(m):0;
+  this.store.transact(label,project=>{
+    const hit=findNodeGlobal(project,m.nodeId);if(!hit)return;
+    if(m.mode==='move'){
+      const current=hit.node.editorPosition&&typeof hit.node.editorPosition==='object'?hit.node.editorPosition:{};
+      const old=current[m.device]&&typeof current[m.device]==='object'?current[m.device]:(m.device==='desktop'&&('x'in current||'y'in current)?current:{});
+      hit.node.editorPosition={...current,[m.device]:{...old,x:m.x??m.startX,y:m.y??m.startY}};
+    }else{
+      const dimensions={...(m.widthMoved?{width:m.width}:{}),...(m.heightMoved?{height:m.height}:{})};
+      if(m.device==='desktop'){
+        const existingDesktop=hit.node.responsive?.desktop||{},basePatch={},responsivePatch={};
+        for(const [key,value] of Object.entries(dimensions)){
+          if(Object.prototype.hasOwnProperty.call(existingDesktop,key))responsivePatch[key]=value;
+          else basePatch[key]=value;
+        }
+        hit.node.style={...(hit.node.style||{}),...basePatch};
+        if(Object.keys(responsivePatch).length)hit.node.responsive={...(hit.node.responsive||{}),desktop:{...existingDesktop,...responsivePatch}};
+      }else hit.node.responsive={...(hit.node.responsive||{}),[m.device]:{...(hit.node.responsive?.[m.device]||{}),...dimensions}};
+      const current=hit.node.editorPosition&&typeof hit.node.editorPosition==='object'?hit.node.editorPosition:{};
+      const old=current[m.device]&&typeof current[m.device]==='object'?current[m.device]:(m.device==='desktop'&&('x'in current||'y'in current)?current:{});
+      hit.node.editorPosition={...current,[m.device]:{...old,x:m.x??m.startX,y:m.y??m.startY}};
+    }
+    if(requestedPageHeight>0){
+      const page=(project.pages||[]).find(item=>item.id===m.pageId);
+      if(page){
+        const settings=page.settings&&typeof page.settings==='object'?page.settings:{};
+        const saved=settings.canvasHeightByDevice&&typeof settings.canvasHeightByDevice==='object'?settings.canvasHeightByDevice:{};
+        const currentHeight=Math.max(360,Number(saved[m.device])||360);
+        if(requestedPageHeight>currentHeight+2){
+          page.settings={...settings,canvasHeightByDevice:{...saved,[m.device]:Math.min(50000,Math.ceil(requestedPageHeight+48))}};
+        }
+      }
+    }
+  });
+  this.store.setUI({selected:m.nodeId,rightOpen:true});
+  this.scheduleContentHeight();
+}
+cancelNodeManipulation(e){
+  const m=this.manipulation;if(!m||e.pointerId!==undefined&&m.pointerId!==e.pointerId)return;
+  this.manipulation=null;
+  if(m.wrapper?.isConnected){
+    m.wrapper.classList.remove('is-manipulating');
+    m.wrapper.style.transform=m.startTransform||'';
+    if(m.mode==='resize'){
+      m.wrapper.style.width=m.startWrapperWidth||'';m.wrapper.style.height=m.startWrapperHeight||'';
+      const c=m.content||m.wrapper.querySelector(':scope > .node-content');
+      if(c){c.style.width=m.startContentWidth||'';c.style.height=m.startContentHeight||''}
+      for(const item of m.startChildrenStyles||[]){item.child.style.width=item.width;item.child.style.height=item.height;item.child.style.boxSizing=item.boxSizing}
+    }
+  }
+}
+wireToolbarMenu(){
+  const menu=document.querySelector('.toolbar-more');if(!menu||menu.dataset.wired==='1')return;menu.dataset.wired='1';
+  menu.addEventListener('click',event=>{if(event.target.closest('.toolbar-menu-item'))menu.open=false});
+  document.addEventListener('click',event=>{if(menu.open&&!menu.contains(event.target))menu.open=false});
+  document.addEventListener('keydown',event=>{if(event.key==='Escape')menu.open=false});
+}
+wireControls(){document.getElementById('zoomIn')?.addEventListener('click',()=>this.setZoom(this.store.ui.zoom+.1));document.getElementById('zoomOut')?.addEventListener('click',()=>this.setZoom(this.store.ui.zoom-.1));document.getElementById('zoomFit')?.addEventListener('click',()=>this.fit());document.getElementById('gridBtn')?.addEventListener('click',()=>this.store.setUI({grid:!this.store.ui.grid}));document.getElementById('structureBtn')?.addEventListener('click',()=>this.panels.setTab('layers'));document.getElementById('focusBtn')?.addEventListener('click',()=>this.store.setUI({focus:!this.store.ui.focus}));this.setupPan()}
+setupPan(){let pan=null;const stop=()=>{pan=null;this.viewport.style.cursor=''};this.viewport.addEventListener('pointerdown',e=>{const allow=e.button===1||(e.button===0&&this.space)||(e.button===0&&(e.ctrlKey||e.metaKey));if(!allow||!e.target.closest('#canvasStage'))return;pan={x:e.clientX,y:e.clientY,sx:this.viewport.scrollLeft,sy:this.viewport.scrollTop};try{this.viewport.setPointerCapture(e.pointerId)}catch{}this.viewport.style.cursor='grabbing'});this.viewport.addEventListener('pointermove',e=>{if(!pan)return;this.viewport.scrollLeft=pan.sx-(e.clientX-pan.x);this.viewport.scrollTop=pan.sy-(e.clientY-pan.y)});this.viewport.addEventListener('pointerup',stop);this.viewport.addEventListener('pointercancel',stop);window.addEventListener('keydown',e=>{if(e.code==='Space'&&!e.repeat&&!e.target.matches('input,textarea,select'))this.space=true});window.addEventListener('keyup',e=>{if(e.code==='Space')this.space=false});window.addEventListener('blur',()=>{this.space=false;stop()});this.viewport.addEventListener('wheel',e=>{if(!(e.ctrlKey||e.metaKey))return;e.preventDefault();this.setZoom(this.store.ui.zoom+(e.deltaY<0?.08:-.08))},{passive:false});window.addEventListener('keydown',e=>{if(e.target?.matches?.('input,textarea,select'))return;if(e.key==='PageDown')this.viewport.scrollBy({top:Math.max(240,this.viewport.clientHeight*.8),behavior:'smooth'});else if(e.key==='PageUp')this.viewport.scrollBy({top:-Math.max(240,this.viewport.clientHeight*.8),behavior:'smooth'});else if(e.key==='Home'&&this.store.ui.focus)this.viewport.scrollTo({top:0,behavior:'smooth'});else if(e.key==='End'&&this.store.ui.focus)this.viewport.scrollTo({top:this.viewport.scrollHeight,behavior:'smooth'});})}
+setZoom(z){if(!this.isFitting)this.manuallyZoomed=true;this.store.setUI({zoom:clamp(Number(z)||1,.2,1.5)})}
+setDevice(device){if(!['desktop','tablet','mobile'].includes(device))return;this.manuallyZoomed=false;this.contentWidth=this.store.project.devices[device]?.width||({desktop:1180,tablet:768,mobile:390}[device]);for(const element of [this.pageCanvas,this.deviceFrame])if(element){element.style.width='';element.style.maxWidth=''}if(this.stage){this.stage.style.width='';this.stage.style.maxWidth=''}this.store.setUI({device,zoom:1});this.inspector?.setDevice?.(device);requestAnimationFrame(()=>this.fit())}
+deviceWidth(){return this.store.project.devices[this.store.ui.device]?.width||1180}
+fit(){if(!this.viewport)return;const base=this.contentWidth||this.deviceWidth(),style=getComputedStyle(this.viewport),padding=(parseFloat(style.paddingLeft)||0)+(parseFloat(style.paddingRight)||0),available=Math.max(260,this.viewport.clientWidth-padding-12);this.isFitting=true;this.setZoom(clamp(available/base,.2,1.2));this.isFitting=false;this.manuallyZoomed=false;requestAnimationFrame(()=>{this.centerStage();this.viewport.scrollTop=0})}
+centerStage(){if(!this.viewport)return;const maxX=Math.max(0,this.viewport.scrollWidth-this.viewport.clientWidth);this.viewport.scrollLeft=Math.round(maxX/2)}
+addElement(type){addNode(this.store,type);this.panels.setTab('layers')}
+syncRuntime(){if(!this.store.ui.interactionMode){this.runtimeCleanup?.();this.runtimeCleanup=null;this.runtimeKey='';return}const key=JSON.stringify([this.store.project.activePageId,this.store.project.interactions,this.store.ui.device]);if(key===this.runtimeKey&&this.runtimeCleanup)return;this.runtimeCleanup?.();this.runtimeCleanup=createRuntime({document,project:this.store.project,navigate:id=>{if(this.store.project.pages.some(p=>p.id===id))this.store.setActivePage(id)}});this.runtimeKey=key}
+render(){const page=this.store.activePage();if(!page)return;renderPage(page,this.pageCanvas,{project:this.store.project,theme:this.store.project.theme,styleLibrary:this.store.project.styleLibrary,device:this.store.ui.device,selectedId:this.store.ui.interactionMode?null:this.store.ui.selected});this.deviceFrame.className=`site-frame ${this.store.ui.device}`;this.pageCanvas.classList.toggle('show-grid',this.store.ui.grid);this.fitPageWidth();this.fitPageHeight();document.getElementById('canvasPageTitle').textContent=page.name;document.getElementById('canvasModeLabel').textContent=this.store.ui.interactionMode?'وضع تجربة التفاعل':'وضع البناء';const hit=this.store.ui.selected?this.store.find(this.store.ui.selected):null;document.getElementById('selectionInfo').textContent=hit?`العنصر: ${hit.node.props?.label||hit.node.props?.title||hit.node.type}`:'لم يتم تحديد عنصر';document.getElementById('pageCountLabel').textContent=`${this.store.project.pages.length} صفحة`;document.getElementById('elementCountLabel').textContent=`${this.store.nodeCount()} عنصر`;document.getElementById('dropEmpty').classList.toggle('hidden',page.nodes.length>0);document.getElementById('gridBtn').classList.toggle('active',this.store.ui.grid);this.applyZoom();this.syncRuntime();if(!this.didInitialFit){this.didInitialFit=true;requestAnimationFrame(()=>this.fit())}}
+fitPageWidth(){
+  if(!this.pageCanvas||!this.deviceFrame||!this.stage||!this.host)return this.deviceWidth();
+  // Fixed device artboard: horizontal overflow from an element never expands the page.
+  const desired=Math.max(320,Math.min(5000,Number(this.deviceWidth())||1180));
+  this.contentWidth=desired;
+  for(const element of [this.pageCanvas,this.deviceFrame]){
+    element.style.width=`${desired}px`;
+    element.style.maxWidth='none';
+    element.style.boxSizing='border-box';
+  }
+  this.stage.style.width=`${desired}px`;
+  this.stage.style.maxWidth='none';
+  this.host.style.width=`${Math.ceil(desired*Math.max(.2,Number(this.store.ui.zoom)||1))}px`;
+  return desired;
+}
+fitPageHeight(){
+  if(!this.pageCanvas||!this.deviceFrame)return 360;
+  // Height is a user-controlled extension saved per page and device. It is NOT
+  // measured and rewritten during render, drag, viewport resize, or content changes.
+  const page=this.store.activePage();
+  const byDevice=page?.settings?.canvasHeightByDevice;
+  const stored=Number(byDevice?.[this.store.ui.device]);
+  const desired=Math.max(360,Math.min(50000,Number.isFinite(stored)&&stored>0?stored:360));
+  for(const element of [this.pageCanvas,this.deviceFrame]){
+    if(Math.abs((parseFloat(element.style.minHeight)||0)-desired)>2)element.style.minHeight=`${desired}px`;
+    element.style.maxWidth='none';
+  }
+  return desired;
+}
+measureResizedNodeBottom(manipulation){
+  if(!manipulation?.wrapper?.isConnected||!this.pageCanvas)return 0;
+  const canvasRect=this.pageCanvas.getBoundingClientRect();
+  const rect=manipulation.wrapper.getBoundingClientRect();
+  const zoom=Math.max(.2,Number(manipulation.zoom)||1);
+  if(!rect.width||!rect.height)return 0;
+  // A page grows only if the element the user explicitly stretched crosses its
+  // current lower edge. Horizontal overflow is deliberately ignored.
+  const bottom=(rect.bottom-canvasRect.top)/zoom;
+  const page=this.store.project.pages.find(item=>item.id===manipulation.pageId);
+  const saved=Number(page?.settings?.canvasHeightByDevice?.[manipulation.device])||360;
+  const current=Math.max(360,saved,this.pageCanvas.offsetHeight||0,this.deviceFrame?.offsetHeight||0);
+  return bottom>current+4?Math.ceil(bottom):0;
+}
+scheduleContentHeight(){
+  if(this.contentHeightFrame||typeof requestAnimationFrame!=='function')return;
+  this.contentHeightFrame=requestAnimationFrame(()=>{
+    this.contentHeightFrame=0;
+    // Width always follows the chosen device. Height only follows native document
+    // flow or a previously recorded manual vertical resize; no content scanning.
+    this.fitPageWidth();
+    this.reflowHost();
+  });
+}
+reflowHost(){if(!this.host||!this.stage)return;const z=Math.max(.2,Number(this.store.ui.zoom)||1),base=Math.max(320,Math.min(5000,Number(this.deviceWidth())||1180));const logicalHeight=Math.max(this.stage.offsetHeight||0,this.deviceFrame?.offsetHeight||0,this.pageCanvas?.offsetHeight||0,360);this.host.style.width=`${Math.ceil(base*z)}px`;this.host.style.height=`${Math.ceil(logicalHeight*z+70)}px`}
+applyZoom(){const z=this.store.ui.zoom,base=Math.max(320,Math.min(5000,Number(this.deviceWidth())||1180));this.stage.style.width=`${base}px`;this.stage.style.maxWidth='none';this.stage.style.transform=`scale(${z})`;this.stage.style.transformOrigin='top left';this.stage.style.left='0';this.stage.style.right='auto';this.stage.style.margin='0';this.reflowHost();document.getElementById('zoomLabel').textContent=`${Math.round(z*100)}%`;}
+sync(){this.render();document.body.classList.toggle('focus-canvas',this.store.ui.focus);this.refreshPages()}
+refreshPages(){const select=document.getElementById('pageSelect');if(!select)return;select.replaceChildren(...this.store.project.pages.map(p=>{const o=document.createElement('option');o.value=p.id;o.textContent=p.name;return o}));select.value=this.store.project.activePageId}
+cleanup(){this.runtimeCleanup?.();this.runtimeCleanup=null;this.resizeObserver?.disconnect?.()}
+}
+exports.WorkspaceEngine = WorkspaceEngine;
+});
+__modules.set("src/features/assets/asset-service.js",(exports,__require)=>{
+const {addAsset,updateAsset,removeAsset,searchAssets,normalizeAssets,findAsset,assetForNodeType} = __require("src/core/assets.js");
+const {dataUrlFromFile} = __require("src/core/utils.js");
+const {findNodeGlobal} = __require("src/core/model.js");
+class AssetService {
+  constructor(store){this.store=store}
+  list({query='',folder='',tag='',kind=''}={}){return searchAssets(this.store.project.assets,query,folder,tag,kind)}
+  folders(){return [...new Set(normalizeAssets(this.store.project.assets).map(asset=>asset.folder))].sort()}
+  tags(){return [...new Set(normalizeAssets(this.store.project.assets).flatMap(asset=>asset.tags))].sort()}
+  get(id){return findAsset(this.store.project,id)}
+  add(raw){return addAsset(this.store,raw)}
+  update(id,patch){return updateAsset(this.store,id,patch)}
+  remove(id){return removeAsset(this.store,id)}
+  async addFile(file,{purpose='',folder='',tags=[],alt='',attachTo=null}={}){
+    const data=await dataUrlFromFile(file);
+    const raw={originalName:file.name,name:'',type:file.type,size:file.size,data,folder:folder||purpose||'general',tags,alt:alt||String(file.name).replace(/\.[^.]+$/,'')};
+    let width=0,height=0;
+    if(String(file.type||'').startsWith('image/')){
+      try{const url=URL.createObjectURL(file);const image=new Image();await new Promise((resolve,reject)=>{image.onload=resolve;image.onerror=reject;image.src=url});width=image.naturalWidth;height=image.naturalHeight;URL.revokeObjectURL(url)}catch{}
+    }
+    const asset=this.add({...raw,width,height});
+    if(attachTo)this.assignToNode(attachTo,asset.id);
+    return asset;
+  }
+  assignToNode(nodeId,assetId){
+    const asset=this.get(assetId);if(!asset)return false;
+    const hitBefore=findNodeGlobal(this.store.project,nodeId); if(!hitBefore)return false; const expected=assetForNodeType(hitBefore.node.type); if(expected!=='other'&&asset.kind!==expected)return false;
+    return this.store.transact('ربط وسيط بالعنصر',project=>{const hit=findNodeGlobal(project,nodeId);if(!hit)return;const n=hit.node;n.props={...(n.props||{}),assetId:asset.id};
+      if(asset.kind==='image'){n.props.src=asset.data;n.props.alt=n.props.alt||asset.alt||asset.name}
+      else if(asset.kind==='video'){n.props.src=asset.data}
+      else if(asset.kind==='audio'){n.props.src=asset.data}
+      else {n.props.url=asset.data;n.props.filename=asset.filename}
+    });
+  }
+  compatibleForNode(nodeType){const desired=assetForNodeType(nodeType);return this.list({kind:desired})}
+}
+exports.AssetService = AssetService;
+});
+__modules.set("src/features/backup/backup-service.js",(exports,__require)=>{
+const {normalizeProject,SCHEMA_VERSION} = __require("src/core/model.js");
+const {deepClone} = __require("src/core/utils.js");
+
+const BACKUP_VERSION = 1;
+function createBackup(project) {
+  return {
+    format: 'bunaa-project-backup',
+    backupVersion: BACKUP_VERSION,
+    schemaVersion: SCHEMA_VERSION,
+    exportedAt: new Date().toISOString(),
+    project: deepClone(normalizeProject(project)),
+  };
+}
+function parseBackup(raw) {
+  const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+  if (!parsed || parsed.format !== 'bunaa-project-backup' || !parsed.project) throw new Error('ملف النسخة الاحتياطية غير صالح.');
+  return normalizeProject(parsed.project);
+}
+function restoreBackup(store, raw, { rename = '' } = {}) {
+  const project = parseBackup(raw);
+  if (rename) project.meta.name = String(rename).trim() || project.meta.name;
+  project.meta.updatedAt = new Date().toISOString();
+  const saved = store.repo.create(store.userId, { name: project.meta.name, seed: project });
+  store.openProject(saved.meta.id);
+  return store.project;
+}
+function downloadBackup(project) {
+  const blob = new Blob([JSON.stringify(createBackup(project), null, 2)], { type: 'application/json;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = `${String(project.meta?.name || 'bunaa-project').replace(/[^\w\u0600-\u06ff.-]+/g, '-').slice(0, 80)}.bunaa.json`;
+  anchor.click();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+exports.createBackup = createBackup;
+exports.parseBackup = parseBackup;
+exports.restoreBackup = restoreBackup;
+exports.downloadBackup = downloadBackup;
+});
+__modules.set("src/features/cms/index.js",(exports,__require)=>{
+const {CMS_FIELD_TYPES,addCollection,updateCollection,removeCollection,addItem,updateItem,removeItem,getCollection,getCollectionItems} = __require("src/core/cms.js");
+exports.CMS_FIELD_TYPES = CMS_FIELD_TYPES;
+exports.addCollection = addCollection;
+exports.updateCollection = updateCollection;
+exports.removeCollection = removeCollection;
+exports.addItem = addItem;
+exports.updateItem = updateItem;
+exports.removeItem = removeItem;
+exports.getCollection = getCollection;
+exports.getCollectionItems = getCollectionItems;
+});
+__modules.set("src/features/components/index.js",(exports,__require)=>{
+const {createSymbolFromSelection,insertSymbol,updateSymbol,removeSymbol,resolveSymbol} = __require("src/core/symbols.js");
+exports.createSymbolFromSelection = createSymbolFromSelection;
+exports.insertSymbol = insertSymbol;
+exports.updateSymbol = updateSymbol;
+exports.removeSymbol = removeSymbol;
+exports.resolveSymbol = resolveSymbol;
+});
+__modules.set("src/features/design/design-service.js",(exports,__require)=>{
+const {deepClone} = __require("src/core/utils.js");
+function setDesignToken(store, group, key, value) {
+  return store.transact('تعديل Design Token', project => {
+    project.theme.tokens ||= {};
+    if (group === '') project.theme.tokens[key] = deepClone(value);
+    else if (group.includes('.')) { const parts = group.split('.'); let target = project.theme.tokens; for (const part of parts) target = target[part] ||= {}; target[key] = deepClone(value); }
+    else { project.theme.tokens[group] ||= {}; project.theme.tokens[group][key] = deepClone(value); }
+    if (group === 'colors' && ['primary','secondary','accent','surface','text','muted'].includes(key)) project.theme[key] = value;
+  });
+}
+function defineClass(store, name, styles = {}) {
+  return store.transact('إنشاء Class', project => {
+    project.styleLibrary ||= { classes: {}, textStyles: {}, effects: {} };
+    project.styleLibrary.classes[name] = deepClone(styles);
+  });
+}
+function defineTextStyle(store, name, styles = {}) {
+  return store.transact('إنشاء Text Style', project => {
+    project.styleLibrary ||= { classes: {}, textStyles: {}, effects: {} };
+    project.styleLibrary.textStyles[name] = deepClone(styles);
+  });
+}
+exports.setDesignToken = setDesignToken;
+exports.defineClass = defineClass;
+exports.defineTextStyle = defineTextStyle;
+});
+__modules.set("src/features/navigation/navigation-service.js",(exports,__require)=>{
+const {addMenuItem,updateMenuItem,removeMenuItem,reorderMenuItem,ensurePageMenu,visiblePages} = __require("src/core/navigation.js");
+function getMenus(project) {
+  return (project?.navigation?.menus || []).map(menu => ({ ...menu, items: Array.isArray(menu.items) ? menu.items : [] }));
+}
+function getHeaderMenu(project) {
+  return getMenus(project).find(menu => menu.id === project?.navigation?.headerMenuId) || getMenus(project)[0] || null;
+}
+function syncNavigation(project) {
+  const draft = { ...project, navigation: structuredClone(project.navigation || {}) };
+  if (!draft.navigation.headerMenuId) draft.navigation.headerMenuId = 'main';
+  ensurePageMenu(draft, draft.navigation.headerMenuId);
+  return draft.navigation;
+}
+const navigationActions = { addMenuItem, updateMenuItem, removeMenuItem, reorderMenuItem, visiblePages };
+exports.getMenus = getMenus;
+exports.getHeaderMenu = getHeaderMenu;
+exports.syncNavigation = syncNavigation;
+exports.navigationActions = navigationActions;
+});
+__modules.set("src/features/projects/project-service.js",(exports,__require)=>{
+class ProjectService {
+  constructor(repository) { this.repository = repository; }
+  list(userId, query = '') {
+    const all = this.repository.list(userId);
+    const q = String(query || '').trim().toLowerCase();
+    return q ? all.filter(project => `${project.name} ${project.template || ''}`.toLowerCase().includes(q)) : all;
+  }
+  stats(userId) {
+    const projects = this.list(userId);
+    return { count: projects.length, pages: projects.reduce((sum, item) => sum + Number(item.pages || 0), 0), nodes: projects.reduce((sum, item) => sum + Number(item.nodes || 0), 0) };
+  }
+  recent(userId, limit = 3) { return this.list(userId).slice(0, Math.max(1, Number(limit) || 3)); }
+}
+exports.ProjectService = ProjectService;
+});
+__modules.set("src/features/releases/release-service.js",(exports,__require)=>{
+const {compileSite} = __require("src/features/seo/index.js");
+class ReleaseService {
+  constructor(store) { this.store = store; }
+  inspect() {
+    const diagnostics = compileSite(this.store.project).diagnostics;
+    const release = this.store.project.release || { channel: 'draft', status: 'draft', version: 1, publishedAt: null };
+    return { release: { ...release }, diagnostics, canPublish: diagnostics.issues.length === 0 };
+  }
+  markReady(channel = 'production') {
+    return this.store.transact('تجهيز الإصدار', project => {
+      project.release ||= { channel: 'draft', status: 'draft', version: 1, publishedAt: null };
+      project.release.channel = channel;
+      project.release.status = 'ready';
+      project.release.version = Number(project.release.version || 0) + 1;
+    });
+  }
+  publish() {
+    const state = this.inspect();
+    if (!state.canPublish) return { ok: false, ...state };
+    const publishedAt = new Date().toISOString();
+    this.store.transact('نشر إصدار الموقع', project => {
+      project.release ||= {};
+      project.release.status = 'published';
+      project.release.channel = 'production';
+      project.release.version = Number(project.release.version || 0) + 1;
+      project.release.publishedAt = publishedAt;
+      for (const page of project.pages || []) if (page.status === 'draft') page.status = 'published';
+    });
+    this.store.persistNow();
+    return { ok: true, ...this.inspect() };
+  }
+  unpublish() {
+    return this.store.transact('إيقاف النشر', project => {
+      project.release ||= {};
+      project.release.status = 'draft';
+      project.release.channel = 'draft';
+    });
+  }
+}
+exports.ReleaseService = ReleaseService;
+});
+__modules.set("src/features/seo/index.js",(exports,__require)=>{
+const {auditProject} = __require("src/engine/quality-audit.js"); const {compileSite} = __require("src/engine/site-compiler.js");
+exports.auditProject = auditProject;
+exports.compileSite = compileSite;
+});
+__modules.set("src/main.js",(exports,__require)=>{
+const {getClientRuntime} = __require("src/core/runtime.js");
+const {App} = __require("src/app/app.js");
+const app=new App();
+if(typeof window!=='undefined')window.__BUNAA_APP=app;
+
+const showBootError=(error)=>{
+  try{
+    console.error('Bunaa boot failed',error);
+    const existing=document.getElementById('bunaaBootError');
+    const box=existing||document.createElement('section');
+    if(!existing){box.id='bunaaBootError';document.body?.appendChild(box)}
+    box.innerHTML='<div style="max-width:720px;margin:8vh auto;padding:28px;border:1px solid #ddd;border-radius:18px;background:#fff;font-family:system-ui;direction:rtl"><h1 style="margin-top:0">تعذر تشغيل بَنّاء</h1><p>حدث خطأ أثناء تشغيل الاستوديو. أعد تحميل الصفحة. تفاصيل الخطأ تظهر في Console للمراجعة التقنية.</p><button onclick="location.reload()" style="padding:10px 16px;border:0;border-radius:10px;cursor:pointer">إعادة تحميل</button></div>';
+    Object.assign(box.style,{position:'fixed',inset:'0',zIndex:'999999',background:'#f5f6fa',padding:'20px'});
+  }catch{}
+};
+
+if(typeof window!=='undefined'){
+  window.addEventListener('error',event=>{if(!app.booted)showBootError(event.error||event.message)});
+  window.addEventListener('unhandledrejection',event=>{if(!app.booted)showBootError(event.reason)});
+}
+const openWorkspace=mode=>app.showWorkspace(mode||'normal');
+const bootstrap=()=>app.start();
+if(typeof window!=='undefined'){window.__BUNAA_LAYOUT_DIAGNOSTICS__=()=>{const root=document.querySelector('.workspace-main'),canvas=document.querySelector('.canvas-area'),viewport=document.querySelector('#canvasViewport');return {rootWidth:root?.getBoundingClientRect().width||0,canvasWidth:canvas?.getBoundingClientRect().width||0,viewportWidth:viewport?.getBoundingClientRect().width||0,display:getComputedStyle(root||document.body).display,leftCollapsed:root?.classList.contains('left-collapsed')||false,rightCollapsed:root?.classList.contains('right-collapsed')||false,scrollWidth:viewport?.scrollWidth||0,scrollHeight:viewport?.scrollHeight||0,clientWidth:viewport?.clientWidth||0,clientHeight:viewport?.clientHeight||0};};}
+
+try{if(typeof window!=='undefined')window.__BUNAA_RUNTIME__=getClientRuntime();bootstrap()}catch(error){showBootError(error)}
+exports.app = app;
+exports.openWorkspace = openWorkspace;
+exports.bootstrap = bootstrap;
+});
+__modules.set("src/ui/dialogs.js",(exports,__require)=>{
+const {showModal} = __require("src/ui/modal.js");
+const {exportZip,exportCurrentHtml,exportProjectJson,stylesheet} = __require("src/engine/exporter.js");
+const {nodeHtml} = __require("src/engine/renderer.js");
+const {pageAnchor} = __require("src/engine/routing.js");
+const {buildPreviewRuntimeScript} = __require("src/engine/preview-router.js");
+const {auditProject} = __require("src/engine/quality-audit.js");
+class Dialogs{
+  constructor(store){this.store=store;this.host=document.getElementById('modalHost')}
+  bind(){document.getElementById('previewBtn').onclick=()=>this.preview();document.getElementById('exportBtn').onclick=()=>this.export();document.getElementById('qualityBtn').onclick=()=>this.quality();document.getElementById('globalStyleBtn').onclick=()=>this.theme();document.getElementById('shortcutsBtn').onclick=()=>this.shortcuts();document.getElementById('advancedDevicesBtn').onclick=()=>this.store.setUI({advancedDevices:!this.store.ui.advancedDevices})}
+  preview(){
+    const body=`<div class="preview-toolbar" role="toolbar" aria-label="أدوات المعاينة">
+      <div class="preview-device-switcher" role="group" aria-label="حجم شاشة المعاينة">
+        <button type="button" class="active" data-preview-device="desktop" aria-pressed="true">كمبيوتر <small>1180px</small></button>
+        <button type="button" data-preview-device="tablet" aria-pressed="false">لوحي <small>768px</small></button>
+        <button type="button" data-preview-device="mobile" aria-pressed="false">هاتف <small>390px</small></button>
+      </div>
+      <div class="preview-actions"><span id="previewViewportLabel" aria-live="polite">معاينة الكمبيوتر · 1180px</span>
+        <button type="button" class="secondary-btn" data-preview-refresh title="إعادة تحميل الموقع في المعاينة">↻ تحديث</button>
+        <button type="button" class="secondary-btn" data-preview-popout title="فتح المعاينة في نافذة منفصلة">↗ نافذة مستقلة</button>
+      </div>
+    </div><div class="preview-frame-shell" id="previewFrameShell"><iframe id="previewFrame" class="preview-iframe" title="معاينة تفاعلية للموقع"></iframe></div>`;
+    const modal=showModal(this.host,{title:'معاينة الموقع الفعلية',body,wide:true});
+    const frame=modal.querySelector('#previewFrame');
+    const shell=modal.querySelector('#previewFrameShell');
+    const label=modal.querySelector('#previewViewportLabel');
+    const devices={desktop:{width:1180,label:'الكمبيوتر'},tablet:{width:768,label:'الجهاز اللوحي'},mobile:{width:390,label:'الهاتف'}};
+    let currentDevice='desktop';
+    const applyDevice=(device)=>{
+      const key=Object.prototype.hasOwnProperty.call(devices,device)?device:'desktop';
+      const preset=devices[key];currentDevice=key;
+      frame.style.setProperty('width',`${preset.width}px`,'important');
+      frame.style.setProperty('flex-basis',`${preset.width}px`,'important');
+      frame.style.setProperty('min-width','0','important');
+      frame.style.setProperty('max-width','none','important');
+      frame.dataset.previewDevice=key;
+      label.textContent=`معاينة ${preset.label} · ${preset.width}px`;
+      modal.querySelectorAll('[data-preview-device]').forEach(button=>{
+        const active=button.dataset.previewDevice===key;
+        button.classList.toggle('active',active);button.setAttribute('aria-pressed',String(active));
+      });
+      // Regenerate from the same document model using this device's saved styles
+      // and positions. The iframe width is the viewport used by its media queries.
+      frame.srcdoc=this.previewHtml(key);
+    };
+    frame.addEventListener('load',()=>{
+      requestAnimationFrame(()=>{shell.scrollLeft=Math.max(0,(shell.scrollWidth-shell.clientWidth)/2)});
+    });
+    modal.querySelectorAll('[data-preview-device]').forEach(button=>button.addEventListener('click',()=>applyDevice(button.dataset.previewDevice)));
+    modal.querySelector('[data-preview-refresh]')?.addEventListener('click',()=>{frame.srcdoc=this.previewHtml(currentDevice);label.textContent=`معاينة ${devices[currentDevice].label} · ${devices[currentDevice].width}px · تم التحديث`});
+    modal.querySelector('[data-preview-popout]')?.addEventListener('click',()=>{
+      try{
+        const url=URL.createObjectURL(new Blob([this.previewHtml(currentDevice)],{type:'text/html;charset=utf-8'}));
+        const opened=window.open(url,'_blank','noopener,noreferrer');
+        if(!opened){label.textContent='السماح بالنوافذ المنبثقة مطلوب لفتح نافذة مستقلة';URL.revokeObjectURL(url);return;}
+        setTimeout(()=>URL.revokeObjectURL(url),120000);
+      }catch(error){label.textContent='تعذر فتح نافذة مستقلة؛ استخدم المعاينة داخل المحرر';}
+    });
+    applyDevice(currentDevice);
+    return modal;
+  }
+  previewHtml(device='desktop'){
+    const project=this.store.project;
+    const pages=project.pages||[];
+    const targetDevice=['desktop','tablet','mobile'].includes(device)?device:'desktop';
+    const navMenu=project.navigation?.menus?.find(item=>item.id===project.navigation?.headerMenuId);
+    const navItems=Array.isArray(navMenu?.items)&&navMenu.items.length?navMenu.items:pages.map(page=>({label:page.name,type:'page',targetId:page.id}));
+    const hasAuthoredNavbar=nodes=>(nodes||[]).some(node=>node.type==='navbar'||hasAuthoredNavbar(node.children));
+    // A navbar authored on the canvas is the source of truth; do not add a second
+    // synthetic header over it. For multipage sites without one, keep a compact
+    // navigation header so internal pages remain testable in preview.
+    const needsFallbackNav=pages.length>1&&!pages.some(page=>hasAuthoredNavbar(page.nodes));
+    const nav=needsFallbackNav?navItems.map(item=>{
+      const target=pages.find(page=>page.id===item.targetId)||pages.find(page=>page.name===item.label);
+      const internal=item.type!=='url'&&!!target;
+      const href=internal?pageAnchor(target.id):String(item.url||'#');
+      return `<a href="${escapeText(href)}"${internal?` data-page-target="${escapeText(target.id)}"`:''}${item.newTab?' target="_blank" rel="noopener noreferrer"':''}>${escapeText(item.label||target?.name||'رابط')}</a>`;
+    }).join(''):'';
+    const sections=pages.map((page,index)=>{
+      const body=(page.nodes||[]).map(node=>nodeHtml(node,project.theme,project,targetDevice,null,null)).join('');
+      return `<section class="preview-page" data-preview-section="${escapeText(page.id)}" id="page-${encodeURIComponent(page.id)}" ${index?'hidden':''}><main>${body}</main></section>`;
+    }).join('');
+    const theme=project.theme||{};
+    const brand=project.site?.brand?.name||project.meta?.name||'بَنّاء';
+    const siteNav=needsFallbackNav?`<header class="export-site-nav preview-site-nav"><strong>${escapeText(brand)}</strong><nav>${nav}</nav></header>`:'';
+    const script=buildPreviewRuntimeScript(pages.map(page=>page.id),project.interactions||[],project.assets||[],targetDevice);
+    const css=stylesheet(theme,project);
+    const previewCss=`html,body{min-height:100%;}html{scroll-behavior:smooth}body{margin:0;overflow-x:hidden}.preview-page{width:100%;max-width:1180px;margin:0 auto;min-height:360px}.preview-page main{width:100%;max-width:none;margin:0 auto}.preview-page[hidden]{display:none!important}.node-resize-handle{display:none!important}img,video,iframe,audio,canvas,svg{max-width:100%}.preview-site-nav{position:sticky;top:0;z-index:50;background:var(--b-surface,#fff)}.preview-site-nav nav{display:flex;gap:14px;flex-wrap:wrap}.preview-site-nav a{color:var(--b-primary,#5b5ce2);text-decoration:none}@media(max-width:640px){.preview-page{max-width:100%}.preview-site-nav{padding:10px 12px;gap:8px}.preview-site-nav nav{gap:8px}}`;
+    return `<!doctype html><html lang="${escapeText(project.site?.language||'ar')}" dir="${escapeText(project.site?.direction||'rtl')}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"><title>${escapeText(project.site?.title||project.meta?.name||'معاينة الموقع')}</title><style>${css}\n${previewCss}</style></head><body>${siteNav}${sections}${script}</body></html>`;
+  }
+  export(){
+    const pages=this.store.project.pages||[];
+    const pageOptions=pages.map(page=>`<option value="${escapeText(page.id)}" ${page.id===this.store.project.activePageId?'selected':''}>${escapeText(page.name||page.slug||'صفحة')}</option>`).join('');
+    const body=`<div class="list-stack">
+      <div class="quality-item good">HTML مستقل: يضم كل صفحات المشروع وروابطها والتنقلات والحركات وCSS وJavaScript والوسائط التي يمكن تضمينها داخل ملف واحد، ويبدأ بالصفحة التي تختارها أدناه. ZIP كامل: ينشئ ملف HTML منفصلًا لكل صفحة ويربطها بباقي الصفحات، ويضم CSS وJavaScript ووسائط المشروع والملفات الوصفية. الروابط الخارجية العادية تظل روابط خارجية؛ والوسائط التي يمنع مصدرها تنزيلها تُذكر في تقرير واضح ولا تُعتبر منسوخة.</div>
+      <button id="zip" class="primary-btn" type="button">تنزيل ZIP كامل لكل الصفحات</button>
+      <div id="exportStatus" class="quality-item hidden" role="status" aria-live="polite"></div>
+      <div class="field"><label for="htmlPage">الصفحة التي تفتح أولًا داخل ملف HTML المستقل</label><select id="htmlPage">${pageOptions}</select></div>
+      <button id="html" class="secondary-btn" type="button">تنزيل HTML مستقل (كل الصفحات في ملف واحد)</button>
+      <button id="json" class="secondary-btn" type="button">تنزيل بيانات المشروع JSON</button>
+    </div>`;
+    const modal=showModal(this.host,{title:'تصدير الموقع',body});
+    const zipButton=modal.querySelector('#zip'),htmlButton=modal.querySelector('#html'),status=modal.querySelector('#exportStatus');
+    const showStatus=message=>{status.classList.remove('hidden');status.textContent=message};
+    zipButton.onclick=async()=>{
+      zipButton.disabled=true;zipButton.textContent='يجمع الصفحات والأصول…';showStatus('يجري جمع صفحات المشروع والوسائط الممكن تضمينها والتحقق من مسارات الروابط.');
+      try{
+        const files=await exportZip(this.store.project);const failed=files.externalResources||[];
+        showStatus(`اكتمل ZIP: ${files.pageCount||this.store.project.pages.length} صفحة و${files.length} ملفًا.${failed.length?` تعذر تضمين ${failed.length} وسيطًا خارجيًا؛ راجع EXTERNAL_RESOURCES.md داخل ZIP.`:' لم تتبقَّ وسائط مرصودة فشل تضمينها.'}`);
+        zipButton.textContent='تم تجهيز ZIP الكامل';
+      }catch(error){showStatus(`تعذر التصدير: ${String(error?.message||error)}`);zipButton.disabled=false;zipButton.textContent='إعادة محاولة ZIP';}
+    };
+    htmlButton.onclick=async()=>{
+      htmlButton.disabled=true;const old=htmlButton.textContent;htmlButton.textContent='يجمع الصفحات داخل ملف واحد…';showStatus('يجري إنشاء HTML مستقل مع CSS وJavaScript والتنقل بين جميع صفحات المشروع.');
+      try{
+        const result=await exportCurrentHtml(this.store.project,modal.querySelector('#htmlPage').value);
+        showStatus(`اكتمل HTML المستقل: ${result.pages} صفحة مضمنة في ملف واحد، والصفحة الأولى «${result.page}».${result.external?.length?` تعذر تضمين ${result.external.length} وسيطًا خارجيًا؛ تحتاج هذه العناصر اتصالًا بالمصدر أو استكمال الوسائط من أداة ZIP.`:' تم تضمين الوسائط التي أمكن الوصول إليها.'}`);
+        htmlButton.textContent='تم تجهيز HTML المستقل';
+      }catch(error){showStatus(`تعذر تصدير HTML: ${String(error?.message||error)}`);htmlButton.disabled=false;htmlButton.textContent='إعادة محاولة HTML';}
+      if(!htmlButton.disabled&&htmlButton.textContent===old)htmlButton.textContent='تم تجهيز HTML المستقل';
+    };
+    modal.querySelector('#json').onclick=()=>exportProjectJson(this.store.project);
+    return modal;
+  }
+  quality(){const audit=auditProject(this.store.project);const items=[...audit.issues,...audit.warnings,...audit.info];const body=`<div class="audit-head"><div class="audit-score"><strong>${audit.score}</strong><span>/ 100</span></div><div><b>تدقيق موحّد</b><p>${items.length?`${items.length} ملاحظات بين أخطاء وتحسينات.`:'لا توجد ملاحظات أساسية.'}</p></div></div><div class="quality-list">${items.map(item=>`<article class="quality-item ${item.severity==='error'?'bad':item.severity==='warning'?'warn':'good'}"><b>${escapeText(item.title)}</b><small>${escapeText(item.detail)}</small></article>`).join('')||'<div class="quality-item good">✓ كل الاختبارات الأساسية سليمة.</div>'}</div>`;return showModal(this.host,{title:'فحص جودة الموقع',body,wide:true})}
+  theme(){const t=this.store.project.theme,tokens=t.tokens||{};const colors=tokens.colors||{};const modal=showModal(this.host,{title:'النظام البصري',body:`<div class="theme-grid"><div class="field"><label>اللون الأساسي</label><input id="primary" value="${escapeText(colors.primary||t.primary)}"></div><div class="field"><label>اللون الثانوي</label><input id="secondary" value="${escapeText(colors.secondary||t.secondary)}"></div><div class="field"><label>لون النص</label><input id="text" value="${escapeText(colors.text||t.text)}"></div><div class="field"><label>الخلفية</label><input id="surface" value="${escapeText(colors.surface||t.surface)}"></div><div class="field"><label>لون الخطوط</label><input id="line" value="${escapeText(colors.line||'#e6e8ef')}"></div><div class="field"><label>عرض الحاوية</label><input id="container" type="number" value="${escapeText(tokens.container||1180)}"></div></div><div class="tips-card"><b>Design Tokens</b><p>غيّر القيم الأساسية مرة واحدة، ثم استخدم الأقسام والمكونات لتظل الهوية البصرية متسقة.</p></div>`});modal.querySelectorAll('input').forEach(input=>input.onchange=e=>{const key=input.id,value=input.type==='number'?Number(input.value):input.value;this.store.transact('تعديل النظام البصري',project=>{project.theme.tokens=project.theme.tokens||{};project.theme.tokens.colors=project.theme.tokens.colors||{};if(key==='container')project.theme.tokens.container=Math.max(320,value||1180);else{project.theme.tokens.colors[key]=value;if(['primary','secondary','text','surface'].includes(key))project.theme[key]=value}})})}
+  shortcuts(){showModal(this.host,{title:'الاختصارات',body:'<div class="shortcut-grid"><div><span>تراجع</span><kbd>Ctrl/⌘ Z</kbd></div><div><span>إعادة</span><kbd>Ctrl/⌘ Y</kbd></div><div><span>حفظ</span><kbd>Ctrl/⌘ S</kbd></div><div><span>تكبير</span><kbd>Ctrl/⌘ + عجلة</kbd></div><div><span>تحريك</span><kbd>Space + سحب</kbd></div><div><span>ملاءمة</span><kbd>F</kbd></div></div>'})}
+  renameProject(){const name=prompt('اسم المشروع',this.store.project.meta.name);if(name?.trim())this.store.transact('تسمية المشروع',project=>project.meta.name=name.trim())}
+}
+const escapeText=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
+exports.Dialogs = Dialogs;
+});
+__modules.set("src/ui/inspector.js",(exports,__require)=>{
+const {findNodeGlobal} = __require("src/core/model.js");
+const {DEVICES,propagateStyle} = __require("src/engine/layout.js");
+const {applyDevicePreset,deviceLabel} = __require("src/core/device-presets.js");
+const {updateProps,updateStyle} = __require("src/core/commands.js");
+const {showModal} = __require("src/ui/modal.js");
+const {nodeHtml} = __require("src/engine/renderer.js");
+const {listVariables} = __require("src/core/variables.js");
+const {mixColors,gradientColors,contrastRatio,bestTextColor,hexToRgb} = __require("src/core/color-mixer.js");
+const {findAsset,assetForNodeType} = __require("src/core/assets.js");
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
+const nativeHex=value=>{const v=String(value||'').trim();if(/^#[0-9a-f]{6}$/i.test(v))return v;if(/^#[0-9a-f]{3}$/i.test(v))return '#'+[...v.slice(1)].map(x=>x+x).join('');const m=v.match(/^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i);if(m)return '#'+[m[1],m[2],m[3]].map(x=>Math.max(0,Math.min(255,Number(x))).toString(16).padStart(2,'0')).join('');return '#000000'};
+const colorPalette=theme=>[theme?.primary,theme?.secondary,theme?.accent,theme?.surface,theme?.soft,theme?.text,theme?.muted,...Object.values(theme?.tokens?.colors||{}),'#ffffff','#000000','#ef4444','#f97316','#eab308','#22c55e','#06b6d4','#3b82f6','#8b5cf6','#ec4899'].filter(Boolean).filter((v,i,a)=>a.indexOf(v)===i);
+const parseGradientColor=value=>{const v=String(value||'').trim();return /^#[0-9a-f]{3}(?:[0-9a-f]{3})?$/i.test(v)||/^rgba?\(/i.test(v)?nativeHex(v):null};
+function splitGradientParts(value){const parts=[];let depth=0,start=0;for(let i=0;i<value.length;i++){if(value[i]==='(')depth++;else if(value[i]===')')depth=Math.max(0,depth-1);else if(value[i]===','&&depth===0){parts.push(value.slice(start,i).trim());start=i+1}}parts.push(value.slice(start).trim());return parts.filter(Boolean)}
+function parseGradientValue(value,theme={}){
+  const match=String(value||'').trim().match(/^(linear|radial)-gradient\((.*)\)$/i);
+  const fallbackA=parseGradientColor(value)||parseGradientColor(theme.primary)||'#5B5CE2';
+  const fallbackB=parseGradientColor(theme.secondary)||'#20A06A';
+  if(!match)return {type:'linear',angle:135,stops:[{color:fallbackA,position:0},{color:fallbackB,position:100}]};
+  const type=match[1].toLowerCase(),parts=splitGradientParts(match[2]);let angle=135,start=0;
+  if(parts.length&&type==='linear'){
+    const head=parts[0];const deg=head.match(/^(-?\d+(?:\.\d+)?)deg$/i);
+    const directionAngles={'to top':0,'to right':90,'to bottom':180,'to left':270,'to top right':45,'to right top':45,'to bottom right':135,'to right bottom':135,'to bottom left':225,'to left bottom':225,'to top left':315,'to left top':315};
+    if(deg){angle=((Number(deg[1])%360)+360)%360;start=1}else if(directionAngles[head.toLowerCase()]!==undefined){angle=directionAngles[head.toLowerCase()];start=1}
+  }else if(parts.length&&type==='radial'&&!parseGradientColor(parts[0]))start=1;
+  const stops=parts.slice(start).map((part,index,all)=>{
+    const positioned=part.match(/\s+(-?\d+(?:\.\d+)?)%\s*$/);const rawColor=positioned?part.slice(0,positioned.index).trim():part;
+    const color=parseGradientColor(rawColor);if(!color)return null;
+    return {color,position:positioned?Math.min(100,Math.max(0,Number(positioned[1]))):(index/Math.max(1,all.length-1))*100};
+  }).filter(Boolean).slice(0,8);
+  if(stops.length<2)return {type:'linear',angle:135,stops:[{color:fallbackA,position:0},{color:fallbackB,position:100}]};
+  return {type,angle,stops:stops.sort((a,b)=>a.position-b.position)};
+}
+function gradientValue(type,angle,stops){
+  const list=[...stops].sort((a,b)=>Number(a.position)-Number(b.position)).map(stop=>`${parseGradientColor(stop.color)||'#000000'} ${Math.min(100,Math.max(0,Number(stop.position)||0))}%`).join(', ');
+  return type==='radial'?`radial-gradient(circle at center, ${list})`:`linear-gradient(${Math.round(Math.min(360,Math.max(0,Number(angle)||0)))}deg, ${list})`;
+}
+
+const STYLE_KEYS=new Set(['color','background','fontSize','radius','marginTop','marginBottom','width','height','minHeight','maxWidth','gap','opacity','paddingY','paddingX']);
+function mediaKindForNode(node){return assetForNodeType(node?.type||'')}
+function mediaAccept(kind){return kind==='image'?'image/*':kind==='video'?'video/*':kind==='audio'?'audio/*':kind==='document'?'.pdf,.doc,.docx,.txt,.zip':'*/*'}
+function colorMixerHtml(){return `<div class="color-mixer-box"><div class="color-mixer-head"><div><b>مزج الألوان</b><small>امزج لونين، وشاهد النتيجة مباشرة.</small></div><span class="mix-result-swatch" data-mix-result></span></div><div class="color-mix-grid"><label class="field"><span>اللون الأول</span><div class="mix-color-input"><input type="color" id="mixA" value="#5B5CE2"><input id="mixAText" value="#5B5CE2"></div></label><label class="field"><span>اللون الثاني</span><div class="mix-color-input"><input type="color" id="mixB" value="#20A06A"><input id="mixBText" value="#20A06A"></div></label></div><div class="field"><label>نسبة المزج <output id="mixRatioOut">50%</output></label><input id="mixRatio" type="range" min="0" max="100" value="50"></div><div class="field"><label>طريقة المزج</label><select id="mixSpace"><option value="rgb">RGB — متوازن</option><option value="hsl">HSL — ناعم</option></select></div><div class="mix-preview-row"><div><small>النتيجة</small><b id="mixHex">#6D7E76</b></div><div><small>تباين مع الأبيض</small><b id="mixContrast">—</b></div><button type="button" class="secondary-btn" id="mixCopy">نسخ اللون</button></div><div class="field"><label>Gradient جاهز</label><div class="gradient-preview" data-gradient-preview></div><code data-gradient-value>linear-gradient(90deg, #5B5CE2 0%, #20A06A 100%)</code><div class="mix-action-row"><button type="button" class="secondary-btn" data-apply-gradient>استخدم الـGradient في الخلفية</button><button type="button" class="secondary-btn" data-save-mix>حفظ اللون في ألوان الموقع</button></div></div></div>`}
+class Inspector{
+  constructor(store){this.store=store;this.device='desktop';this.advanced=false}
+  mount(el){this.el=el;this.el.__assetService=this.assetService;this.render()}
+  setDevice(d){if(!DEVICES.includes(d))return;this.device=d;const id=this.store.ui.selected;const hit=id?findNodeGlobal(this.store.project,id):null;if(hit&&!hit.node.responsive?.[d])this.store.transact('تهيئة إعدادات الجهاز',project=>{const current=findNodeGlobal(project,id);if(current)applyDevicePreset(current.node,d,{onlyMissing:true})});this.render()}
+  field(label,key,value,type='text'){return `<div class="field"><label>${label}</label><input data-key="${key}" data-type="${type}" value="${esc(value)}"></div>`}
+  recordsText(node){const items=Array.isArray(node.props?.items)?node.props.items:[];return items.map(item=>{if(Array.isArray(item))return item.join(' | ');if(item&&typeof item==='object'){if(node.type==='team-grid')return [item.name||'',item.role||'',item.image||'',item.url||'',item.bio||''].join(' | ');if(['blog-grid','product-grid','portfolio-grid','filterable-gallery','feature-bento'].includes(node.type))return [item.name||item.title||'',item.price||item.excerpt||item.description||item.text||'',item.image||item.src||'',item.url||'',item.category||''].join(' | ');if(node.type==='service-grid')return [item.icon||'✦',item.title||item.name||'',item.description||'',item.url||''].join(' | ');if(node.type==='logo-cloud')return [item.name||item.label||item||'',item.image||'',item.url||''].join(' | ');if(node.type==='event-list')return [item.date||'',item.title||'',item.description||'',item.location||'',item.url||''].join(' | ');if(node.type==='review-grid')return [item.quote||item.text||'',item.name||'',item.company||'',item.rating||5].join(' | ');if(node.type==='job-board')return [item.title||'',item.location||'',item.type||'',item.description||'',item.url||''].join(' | ');if(node.type==='testimonial-carousel')return [item.quote||item.text||'',item.name||'',item.role||''].join(' | ');if(node.type==='process-steps')return [item.title||item.name||'',item.description||item.text||''].join(' | ');if(node.type==='faq-list')return [item.question||item.title||'',item.answer||item.text||''].join(' | ');return [item.label||item.name||item.value||'',item.value||item.description||''].join(' | ')}return String(item??'')}).join('\n')}
+  recordsField(node){const type=node.type;let hint='كل سطر عنصر جديد وافصل حقوله بعلامة |';if(type==='team-grid')hint='كل سطر: اسم العضو | الصفة | رابط الصورة | رابط الملف | نبذة قصيرة';else if(['blog-grid','product-grid','portfolio-grid','filterable-gallery','feature-bento'].includes(type))hint='كل سطر: الاسم/العنوان | الوصف/السعر | رابط الصورة | رابط الوجهة | الفئة';else if(type==='service-grid')hint='كل سطر: الأيقونة | عنوان الخدمة | الوصف | رابط الوجهة';else if(type==='logo-cloud')hint='كل سطر: اسم العلامة | رابط صورة الشعار (اختياري) | رابط العلامة';else if(type==='event-list')hint='كل سطر: التاريخ | عنوان الفعالية | الوصف | المكان | رابط التسجيل';else if(type==='review-grid')hint='كل سطر: نص التقييم | الاسم | الجهة | عدد النجوم';else if(type==='job-board')hint='كل سطر: عنوان الوظيفة | المكان | نوع الدوام | الوصف | رابط التقديم';else if(type==='testimonial-carousel')hint='كل سطر: نص الشهادة | الاسم | الصفة';else if(type==='process-steps')hint='كل سطر: عنوان الخطوة | الوصف';else if(type==='faq-list')hint='كل سطر: السؤال | الإجابة';else if(type==='trust-bar')hint='كل سطر: اسم الشريك أو العلامة';return `<div class="field"><label>العناصر (سطر لكل عنصر)</label><textarea data-key="items" data-type="records" rows="5" spellcheck="false">${esc(this.recordsText(node))}</textarea><small>${esc(hint)}</small></div>`}
+
+  colorField(label,key,value,theme,device){
+    const hex=parseGradientColor(value)||parseGradientColor(theme?.primary)||'#5B5CE2';const palette=colorPalette(theme);const swatches=palette.map((c,i)=>`<button type="button" class="color-swatch" title="${esc(c)}" data-color-value="${esc(c)}" style="background:${esc(c)}"></button>`).join('');
+    const gradientAction=key==='background'?'<button type="button" class="secondary-btn" data-gradient-editor style="width:100%;height:30px;margin:5px 0 3px">◩ تدرج الألوان — لونان أو أكثر</button>':'';
+    return `<div class="field color-field" data-color-key="${esc(key)}"><label>${esc(label)}</label><div class="color-control"><button type="button" class="color-preview" data-color-trigger data-color-key="${esc(key)}" title="اختيار لون" style="background:${esc(value||hex)}"><span></span></button><input type="color" data-color-native data-color-key="${esc(key)}" value="${hex}" aria-label="${esc(label)}"><input class="color-text" data-color-text data-color-key="${esc(key)}" value="${esc(value||'')}" placeholder="#5b5ce2 أو rgba(...)" spellcheck="false"><button type="button" class="color-action" data-color-transparent>شفاف</button><button type="button" class="color-action" data-color-eyedropper ${globalThis.EyeDropper?'':'disabled'}>◉</button><button type="button" class="color-action" data-color-mix>مزج</button></div><div class="color-swatches">${swatches}</div>${gradientAction}<small>اضغط مربع اللون للاختيار، أو اكتب HEX / RGB / RGBA. يمكن ضبط تدرج متعدد الألوان للخلفية.</small></div>`;
+  }
+  destinationField(node,props){const options=[`<option value="#" ${!props.url||props.url==='#'?'selected':''}>بدون وجهة</option>`,...this.store.project.pages.map(page=>`<option value="page:${page.id}" ${props.url===`page:${page.id}`?'selected':''}>صفحة: ${esc(page.name)}</option>`),`<option value="__external__" ${props.url&&/^https?:\/\//i.test(props.url)?'selected':''}>رابط خارجي</option>`].join('');const external=this.field('الرابط الخارجي','url',/^https?:\/\//i.test(props.url||'')?props.url:'');return `<div class="field"><label>الوجهة</label><select data-destination-for="${node.id}">${options}</select></div><div data-external-wrap="${node.id}" class="${props.url&&/^https?:\/\//i.test(props.url)?'':'hidden'}">${external}</div>`}
+  semanticText(label,key,value){return `<div class="field"><label>${label}</label><input data-semantic-text="${key}" value="${esc(value)}"></div>`}
+  semanticField(label,key,value,options){return `<div class="field"><label>${label}</label><select data-semantic-key="${key}">${options.map(([v,t])=>`<option value="${esc(v)}" ${String(value)===String(v)?'selected':''}>${t}</option>`).join('')}</select></div>`}
+  layoutControl(label,key,value,options){return `<div class="field"><label>${label}</label><select data-layout-key="${key}">${options.map(([v,t])=>`<option value="${v}" ${String(value)===String(v)?'selected':''}>${t}</option>`).join('')}</select></div>`}
+  mediaField(node){
+    const kind=mediaKindForNode(node); if(!['image','video','audio','document'].includes(kind)) return '';
+    const current=findAsset(this.store.project,node.props?.assetId); const assets=this.store.project.assets.filter(a=>a.kind===kind); const preview=current?(current.kind==='image'?`<img src="${esc(current.data)}" alt="${esc(current.alt||current.name)}">`:`<span class="asset-current-icon">${esc(current.kind.toUpperCase())}</span>`):'<span class="asset-current-icon">＋</span>';
+    return `<section class="media-binding" data-media-kind="${kind}"><div class="media-binding-head"><div><b>وسيط العنصر</b><small>${current?`مرتبط بـ ${esc(current.name)} • ${esc(current.originalName)}`:'لم يتم اختيار ملف بعد'}</small></div><span class="asset-current-preview">${preview}</span></div><div class="media-binding-actions"><select data-media-select><option value="">${current?'تغيير الوسيط…':'اختر من الموقع…'}</option>${assets.map(a=>`<option value="${esc(a.id)}" ${current?.id===a.id?'selected':''}>${esc(a.name)} — ${esc(a.originalName)}</option>`).join('')}</select><button type="button" class="secondary-btn" data-media-upload>رفع من الجهاز</button><button type="button" class="secondary-btn" data-open-assets>المكتبة</button></div><small class="media-help">عند الرفع يُحفظ الملف داخل المشروع ويأخذ اسمًا تلقائيًا مثل <b>${kind==='image'?'img1':kind==='video'?'video1':kind==='audio'?'audio1':'file1'}</b>.</small></section>`;
+  }
+  render(){
+    if(!this.el)return;const id=this.store.ui.selected,hit=id?findNodeGlobal(this.store.project,id):null;if(!hit){this.el.classList.add('hidden');document.getElementById('inspectorEmpty').classList.remove('hidden');return}document.getElementById('inspectorEmpty').classList.add('hidden');this.el.classList.remove('hidden');
+    const n=hit.node,p=n.props||{},s={...(n.style||{}),...(n.responsive?.[this.device]||{})},layout=n.layout||{};let content='';
+    if(['heading','text','quote','badge','alert','button','link','marquee','gradient','glass'].includes(n.type))content+=this.field('النص','text',p.text||'');
+    if(['button','link'].includes(n.type))content+=this.destinationField(n,p);
+    if(n.type==='image')content+=this.mediaField(n)+this.field('الوصف البديل','alt',p.alt||'');
+    if(n.type==='image')content+=`<div class="field"><label>ملاءمة الصورة</label><select data-key="objectFit"><option value="cover" ${((p.objectFit||'cover')==='cover')?'selected':''}>تغطية الإطار — Cover</option><option value="contain" ${p.objectFit==='contain'?'selected':''}>عرض الصورة كاملة — Contain</option><option value="fill" ${p.objectFit==='fill'?'selected':''}>ملء الإطار — Fill</option><option value="none" ${p.objectFit==='none'?'selected':''}>الحجم الأصلي — None</option></select></div>`;
+    if(['video','audio','file','download'].includes(n.type))content+=this.mediaField(n);
+    if(n.type==='card')content+=this.field('العنوان','title',p.title||'')+this.field('الوصف','text',p.text||'')+this.field('نص الزر','button',p.button||'')+this.destinationField(n,p);
+    if(n.type==='product')content+=this.field('الاسم','name',p.name||'')+this.field('السعر','price',p.price||'')+this.field('العملة','currency',p.currency||'')+this.destinationField(n,p);
+    if(['input','textarea','select','search','file'].includes(n.type))content+=this.field('عنوان الحقل','label',p.label||'')+this.field('النص المساعد','placeholder',p.placeholder||'');
+    if(n.type==='faq')content+=this.field('السؤال','question',p.question||'')+this.field('الإجابة','answer',p.answer||'');
+    if(n.type==='navbar')content+=this.field('العلامة','brand',p.brand||'');
+    if(['hero-split','blog-grid','product-grid','portfolio-grid','filterable-gallery','testimonial-carousel','contact-form','process-steps','trust-bar','faq-list','team-grid','service-grid','feature-bento','logo-cloud','event-list','review-grid','job-board'].includes(n.type)){
+      if(['hero-split','contact-form','blog-grid','faq-list','team-grid','service-grid','feature-bento','logo-cloud','event-list','review-grid','job-board'].includes(n.type))content+=this.field('العنوان','title',p.title||'');
+      if(['hero-split','contact-form'].includes(n.type))content+=this.field('الوصف','text',p.text||'');
+      if(n.type==='hero-split')content+=this.field('النص الصغير','eyebrow',p.eyebrow||'')+this.field('رابط الزر','url',p.url||'#')+this.field('نص الزر','button',p.button||'')+this.field('الصورة','image',p.image||'');
+      if(n.type==='contact-form')content+=this.field('نص الإرسال','button',p.button||'إرسال');
+      if(n.type==='product-grid')content+=this.field('نص زر السلة','cartLabel',p.cartLabel||'أضف للسلة');
+      if(n.type==='trust-bar')content+=this.field('التقييم','rating',p.rating||'');
+      content+=this.recordsField(n);
+    }
+    if(n.type==='collection-list'){const opts=[`<option value="">اختر مجموعة…</option>`,...(this.store.project.cms?.collections||[]).map(c=>`<option value="${esc(c.id)}" ${p.collectionId===c.id?'selected':''}>${esc(c.name)}</option>`)].join('');content+=`<div class="field"><label>مجموعة CMS</label><select data-cms-collection="${n.id}">${opts}</select></div>`+this.field('عدد العناصر','limit',p.limit??6,'number')}
+    const variables=listVariables(this.store.project);
+    const boundTypes=new Set(['heading','text','button','link','image','card','product']);
+    if(boundTypes.has(n.type)){content+=`<div class="field"><label>ربط محتوى بمتغير</label><select data-variable-bind><option value="">بدون</option>${variables.map(v=>`<option value="${esc(v.key)}" ${p.bindingVariable===v.key?'selected':''}>${esc(v.name)}</option>`).join('')}</select></div>`}
+    if(n.type==='symbol-instance')content+=`<div class="tips-card"><b>مكون مشترك</b><p>تستخدم هذه النسخة تعريفًا مشتركًا. عدّل الأصل لتطبيق التغييرات على كل النسخ.</p></div>`;
+    const classOptions=Object.keys(this.store.project.styleLibrary?.classes||{});const textStyleOptions=Object.keys(this.store.project.styleLibrary?.textStyles||{});const libraryPanel=`<div class="field-row"><div class="field"><label>Text Style</label><select data-style-library-text><option value="">بدون</option>${textStyleOptions.map(name=>`<option value="${esc(name)}" ${p.textStyle===name?'selected':''}>${esc(name)}</option>`).join('')}</select></div><div class="field"><label>Effect / State</label><select data-style-library-effect><option value="">بدون</option>${Object.keys(this.store.project.styleLibrary?.effects||{}).map(name=>`<option value="${esc(name)}" ${p.effect===name?'selected':''}>${esc(name)}</option>`).join('')}</select></div></div><div class="class-chips">${classOptions.length?classOptions.map(name=>`<button type="button" data-class-toggle="${esc(name)}" class="${(n.classes||[]).includes(name)?'active':''}">.${esc(name)}</button>`).join(''):'<small>أنشئ Classes من Design System لإعادة استخدامها.</small>'}</div>`;const semantic=`<div class="field-row">${this.semanticField('وسم HTML','tag',n.semantic?.tag||'div',[['div','div'],['section','section'],['header','header'],['main','main'],['nav','nav'],['article','article'],['aside','aside'],['footer','footer'],['button','button']])}${this.semanticField('الدور ARIA','role',n.semantic?.role||'', [['','افتراضي'],['banner','banner'],['navigation','navigation'],['main','main'],['contentinfo','contentinfo'],['article','article'],['region','region']])}</div>${this.semanticText('اسم ARIA','ariaLabel',n.semantic?.ariaLabel||'')}<div class="field"><label>Classes</label><input data-class-list value="${esc((n.classes||[]).join(', '))}"><small>افصل بين أسماء الكلاسات بفاصلة.</small></div>${libraryPanel}`;
+    if(!content)content=this.field('اسم وصفي','label',p.label||'');
+    const style=this.colorField('لون النص','color',s.color||'',this.store.project.theme,this.device)+this.colorField('الخلفية','background',s.background||'',this.store.project.theme,this.device)+`<div class="field-row">${this.field('حجم النص','fontSize',s.fontSize??'','number')}${this.field('الاستدارة','radius',s.radius??'','number')}</div><div class="field-row">${this.field('هامش أعلى','marginTop',s.marginTop??0,'number')}${this.field('هامش أسفل','marginBottom',s.marginBottom??14,'number')}</div>`;
+    const structure=`<div class="field-row">${this.layoutControl('العرض', 'display', layout.display||'block', [['block','Block'],['flex','Flex'],['grid','Grid']])}${this.layoutControl('اتجاه', 'direction', layout.direction||'column', [['column','عمودي'],['row','أفقي']])}</div><div class="field-row">${this.layoutControl('المحاذاة','align',layout.align||'stretch',[['stretch','Stretch'],['start','Start'],['center','Center'],['end','End']])}${this.layoutControl('التوزيع','justify',layout.justify||'start',[['start','Start'],['center','Center'],['between','Between'],['end','End']])}</div><div class="field-row">${this.field('الفجوة','gap',s.gap??layout.gap??0,'number')}${this.layoutControl('التفاف','wrap',layout.wrap?'1':'0',[['0','لا'],['1','نعم']])}</div>`;
+    const visibility=`<div class="visibility-grid">${DEVICES.map(d=>`<label><input type="checkbox" data-visibility-device="${d}" ${n.visibility?.[d]!==false?'checked':''}>${d}</label>`).join('')}</div>`;
+    const createdLabel=n.device?.created?deviceLabel(n.device.created):'قبل تحديد الجهاز';
+    this.el.innerHTML=`<div class="device-context"><b>المعاينة الآن: ${esc(deviceLabel(this.device))}</b><small>تمت تهيئة العنصر عند إنشائه على: ${esc(createdLabel)} • يمكنك تخصيص كل جهاز بشكل مستقل.</small></div><section class="inspector-section"><header><b>المحتوى</b><span>${n.type}</span></header><div class="inspector-body">${content}</div></section><section class="inspector-section"><header><b>المظهر</b><span>${this.device}</span></header><div class="inspector-body">${style}</div></section><section class="inspector-section"><header><b>البنية</b><span>Layout</span></header><div class="inspector-body">${structure}</div></section><section class="inspector-section"><header><b>Responsive</b><span>إظهار العنصر</span></header><div class="inspector-body">${visibility}<div class="segmented">${DEVICES.map(d=>`<button data-device="${d}" class="${d===this.device?'active':''}">${d}</button>`).join('')}</div><label class="sync-row"><span>مزامنة نسبية</span><input id="propagate" type="checkbox" ${this.store.project.settings.propagateDevices?'checked':''}></label></div></section><button id="toggleAdvanced" class="advanced-toggle">${this.advanced?'إخفاء التخصيص المتقدم':'التخصيص المتقدم'}</button>${this.advanced?`<section class="inspector-section"><div class="inspector-body">${this.field('العرض','width',s.width??'')}${this.field('الحد الأقصى','maxWidth',s.maxWidth??'')}${this.field('الارتفاع','height',s.height??'','number')}${this.field('الارتفاع الأدنى','minHeight',s.minHeight??'','number')}${this.field('العتامة','opacity',s.opacity??1,'number')}</div></section>`:''}${this.store.ui.mode==='trainee'?'<button id="codeBtn" class="advanced-toggle">&lt;/&gt; كود العنصر</button>':''}`;
+    this.wire(n.id);
+  }
+  openGradientEditor(fieldKey,wrap){
+    if(fieldKey!=='background')return;
+    const current=wrap.querySelector('[data-color-text]')?.value||'';
+    const settings=parseGradientValue(current,this.store.project.theme);
+    let stops=settings.stops.map(stop=>({...stop})),type=settings.type,angle=settings.angle;
+    const body=`<div class="gradient-editor" style="display:grid;gap:12px">
+      <div data-gradient-live style="height:96px;border:1px solid #e2e5ee;border-radius:12px;background:linear-gradient(135deg,#5b5ce2,#20a06a)"></div>
+      <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px;align-items:end">
+        <label class="field"><span>نوع التدرج</span><select id="gradientType"><option value="linear">خطي — Linear</option><option value="radial">دائري — Radial</option></select></label>
+        <label class="field" id="gradientAngleWrap"><span>زاوية التدرج <output id="gradientAngleOut">135°</output></span><input id="gradientAngle" type="range" min="0" max="360" value="135" style="width:100%"></label>
+      </div>
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><b>نقاط الألوان <small id="gradientStopCount" style="font-weight:400;color:#7b8293">(2–8 ألوان)</small></b><div style="display:flex;gap:6px"><button type="button" class="secondary-btn" id="gradientReverse">عكس الاتجاه</button><button type="button" class="primary-btn" id="gradientAddStop">＋ لون</button></div></div>
+      <div id="gradientStops" style="display:grid;gap:8px"></div>
+      <div style="display:grid;gap:5px"><small style="color:#737b8e">CSS الناتج — يُحفظ مع المشروع ويظهر في المعاينة والتصدير</small><code id="gradientCss" style="display:block;padding:9px;background:#f5f6fa;border:1px solid #e5e8f0;border-radius:8px;white-space:normal;overflow-wrap:anywhere;font-size:11px"></code></div>
+    </div>`;
+    let modal;
+    const apply=()=>{const value=gradientValue(type,angle,stops);const input=wrap.querySelector('[data-color-text]');if(input){input.value=value;input.dispatchEvent(new Event('change',{bubbles:true}))}modal?.remove()};
+    modal=showModal(document.getElementById('modalHost'),{title:'تدرج الألوان',body,wide:false,actions:[{label:'إلغاء'},{label:'تطبيق التدرج',kind:'primary',onClick:apply}]});
+    const typeInput=modal.querySelector('#gradientType'),angleInput=modal.querySelector('#gradientAngle'),angleOut=modal.querySelector('#gradientAngleOut'),angleWrap=modal.querySelector('#gradientAngleWrap'),stopHost=modal.querySelector('#gradientStops'),preview=modal.querySelector('[data-gradient-live]'),cssOut=modal.querySelector('#gradientCss'),countOut=modal.querySelector('#gradientStopCount'),addButton=modal.querySelector('#gradientAddStop');
+    typeInput.value=type;angleInput.value=String(angle);
+    const update=()=>{const value=gradientValue(type,angle,stops);preview.style.background=value;cssOut.textContent=value;angleOut.textContent=`${angle}°`;angleWrap.hidden=type==='radial';countOut.textContent=`(${stops.length}/8 ألوان)`;addButton.disabled=stops.length>=8;};
+    const renderStops=()=>{stopHost.innerHTML=stops.map((stop,index)=>`<div data-gradient-stop="${index}" style="display:grid;grid-template-columns:36px minmax(0,1fr) 64px 30px;gap:8px;align-items:center;border:1px solid #e3e6ef;border-radius:9px;padding:8px"><input type="color" data-stop-color="${index}" value="${parseGradientColor(stop.color)||'#5B5CE2'}" aria-label="لون التوقف ${index+1}" style="width:32px;height:30px;border:0;background:transparent;padding:0"><div style="min-width:0"><b style="font-size:11px;display:block;margin-bottom:3px">اللون ${index+1}</b><input type="range" data-stop-position="${index}" min="0" max="100" value="${Math.round(stop.position)}" aria-label="موضع اللون ${index+1}" style="width:100%"></div><output data-stop-output="${index}" style="font-size:11px;text-align:center">${Math.round(stop.position)}%</output><button type="button" data-remove-stop="${index}" ${stops.length<=2?'disabled':''} title="حذف اللون" aria-label="حذف اللون ${index+1}" style="height:29px;border:1px solid #e5e8ef;border-radius:7px;background:#fff;color:#a33">−</button></div>`).join('');
+      stopHost.querySelectorAll('[data-stop-color]').forEach(input=>input.addEventListener('input',()=>{const index=Number(input.dataset.stopColor);if(stops[index])stops[index].color=input.value.toUpperCase();update()}));
+      stopHost.querySelectorAll('[data-stop-position]').forEach(input=>input.addEventListener('input',()=>{const index=Number(input.dataset.stopPosition);if(stops[index])stops[index].position=Number(input.value);const output=stopHost.querySelector(`[data-stop-output="${index}"]`);if(output)output.textContent=`${input.value}%`;update()}));
+      stopHost.querySelectorAll('[data-remove-stop]').forEach(button=>button.addEventListener('click',()=>{if(stops.length<=2)return;stops.splice(Number(button.dataset.removeStop),1);renderStops();update()}));
+      update();
+    };
+    angleInput.addEventListener('input',()=>{angle=Number(angleInput.value);update()});
+    typeInput.addEventListener('change',()=>{type=typeInput.value==='radial'?'radial':'linear';update()});
+    addButton.addEventListener('click',()=>{if(stops.length>=8)return;const ordered=[...stops].sort((a,b)=>a.position-b.position);const points=[{position:0,color:ordered[0].color},...ordered,{position:100,color:ordered[ordered.length-1].color}];let best=null;for(let i=0;i<points.length-1;i++){const gap=points[i+1].position-points[i].position;if(gap>0&&(!best||gap>best.gap))best={left:points[i],right:points[i+1],gap}}if(!best)return;const position=Math.round((best.left.position+best.right.position)/2);const color=mixColors(best.left.color,best.right.color,.5)||'#8B5CF6';stops.push({color,position});stops.sort((a,b)=>a.position-b.position);renderStops()});
+    modal.querySelector('#gradientReverse').addEventListener('click',()=>{stops=stops.map(stop=>({...stop,position:100-stop.position})).sort((a,b)=>a.position-b.position);angle=(angle+180)%360;angleInput.value=String(angle);renderStops()});
+    renderStops();
+  }
+  openColorMixer(fieldKey,wrap){
+    const base=wrap.querySelector('[data-color-text]')?.value||'#5B5CE2';
+    const body=colorMixerHtml(); const modal=showModal(document.getElementById('modalHost'),{title:'مزج الألوان',body,wide:true,actions:[{label:'إلغاء'},{label:'تطبيق النتيجة',kind:'primary',onClick:()=>{const color=modal.querySelector('#mixHex')?.textContent?.trim();if(color) {const input=wrap.querySelector('[data-color-text]');if(input){input.value=color;input.dispatchEvent(new Event('change',{bubbles:true}))}}modal.remove()}}]});
+    const a=modal.querySelector('#mixA'),b=modal.querySelector('#mixB'),at=modal.querySelector('#mixAText'),bt=modal.querySelector('#mixBText'),ratio=modal.querySelector('#mixRatio'),space=modal.querySelector('#mixSpace');a.value=/^#[0-9a-f]{6}$/i.test(base)?base:'#5B5CE2';at.value=a.value;
+    const update=()=>{const c=mixColors(at.value,bt.value,Number(ratio.value)/100,space.value)||'#000000';modal.querySelector('[data-mix-result]').style.background=c;modal.querySelector('#mixHex').textContent=c;modal.querySelector('#mixRatioOut').textContent=`${ratio.value}%`;const cr=contrastRatio(c,'#FFFFFF');modal.querySelector('#mixContrast').textContent=`${cr.toFixed(2)}:1`;const grad=gradientColors([{color:at.value,position:0},{color:bt.value,position:100}],90);modal.querySelector('[data-gradient-preview]').style.background=grad;modal.querySelector('[data-gradient-value]').textContent=grad};
+    modal.querySelector('[data-apply-gradient]')?.addEventListener('click',()=>{const grad=modal.querySelector('[data-gradient-value]')?.textContent||'';if(fieldKey==='background'&&grad){const input=wrap.querySelector('[data-color-text]');if(input){input.value=grad;input.dispatchEvent(new Event('change',{bubbles:true}))}modal.remove()}});
+    modal.querySelector('[data-save-mix]')?.addEventListener('click',()=>{const color=modal.querySelector('#mixHex')?.textContent?.trim();if(!color)return;this.store.transact('حفظ لون ممزوج',project=>{project.theme.tokens=project.theme.tokens||{};project.theme.tokens.colors={...(project.theme.tokens.colors||{})};let n=1;while(project.theme.tokens.colors[`mix${n}`]&&n<999)n++;project.theme.tokens.colors[`mix${n}`]=color});this.render();modal.remove()});
+    a.oninput=()=>{at.value=a.value.toUpperCase();update()};b.oninput=()=>{bt.value=b.value.toUpperCase();update()};at.onchange=()=>{const v=/^#[0-9a-f]{6}$/i.test(at.value)?at.value:'#5B5CE2';at.value=v.toUpperCase();a.value=v;update()};bt.onchange=()=>{const v=/^#[0-9a-f]{6}$/i.test(bt.value)?bt.value:'#20A06A';bt.value=v.toUpperCase();b.value=v;update()};ratio.oninput=update;space.onchange=update;modal.querySelector('#mixCopy')?.addEventListener('click',()=>navigator.clipboard?.writeText(modal.querySelector('#mixHex').textContent||''));update();
+  }
+
+  wire(id){
+    for(const input of this.el.querySelectorAll('[data-key]'))input.addEventListener('change',()=>{const key=input.dataset.key,type=input.dataset.type;let value=input.value;if(type==='number')value=value===''?0:Number(value);if(type==='records'){const node=this.store.find(id)?.node;const typeName=node?.type||'';const lines=String(value||'').split(/\r?\n/).map(line=>line.trim()).filter(Boolean);const parse=line=>line.split('|').map(part=>part.trim());if(['blog-grid','product-grid','portfolio-grid','filterable-gallery','team-grid','feature-bento'].includes(typeName)){value=lines.map((line,index)=>{const [name,detail,image,url,category]=parse(line);if(typeName==='product-grid')return {id:`product-${index+1}`,name:name||`منتج ${index+1}`,price:detail||'',description:'',image:image||'',url:url||'#',category:category||'',cta:'التفاصيل'};if(typeName==='team-grid')return {name:name||`عضو ${index+1}`,role:detail||'',image:image||'',url:url||'#',bio:category||''};return {title:name||`عنصر ${index+1}`,...(typeName==='blog-grid'?{excerpt:detail||''}:{description:detail||''}),image:image||'',url:url||'#',category:category||''}})}else if(typeName==='testimonial-carousel')value=lines.map(line=>{const [quote,name,role]=parse(line);return {quote:quote||'',name:name||'',role:role||''}});else if(typeName==='process-steps')value=lines.map(line=>{const [title,description]=parse(line);return {title:title||'',description:description||''}});else if(typeName==='faq-list')value=lines.map(line=>{const [question,answer]=parse(line);return {question:question||'',answer:answer||''}});else if(typeName==='trust-bar')value=lines.map(line=>line.split('|')[0].trim());updateProps(this.store,id,{items:value});return}if(STYLE_KEYS.has(key)){updateStyle(this.store,id,{[key]:value},this.device);if(this.store.project.settings.propagateDevices)propagateStyle(findNodeGlobal(this.store.project,id)?.node,this.device,{[key]:value})}else updateProps(this.store,id,{[key]:value})});
+    this.el.querySelector('[data-class-list]')?.addEventListener('change',event=>{const classes=[...new Set(String(event.target.value||'').split(',').map(x=>x.trim()).filter(Boolean))];updateProps(this.store,id,{classes})});
+    this.el.querySelectorAll('[data-class-toggle]').forEach(button=>button.addEventListener('click',()=>{const name=button.dataset.classToggle;this.store.transact('تبديل Class',project=>{const hit=findNodeGlobal(project,id);if(!hit)return;const classes=new Set(hit.node.classes||[]);classes.has(name)?classes.delete(name):classes.add(name);hit.node.classes=[...classes]})}));
+    this.el.querySelector('[data-style-library-text]')?.addEventListener('change',event=>updateProps(this.store,id,{textStyle:event.target.value}));
+    this.el.querySelector('[data-style-library-effect]')?.addEventListener('change',event=>updateProps(this.store,id,{effect:event.target.value}));
+    this.el.querySelectorAll('[data-semantic-text]').forEach(input=>input.addEventListener('change',()=>{const key=input.dataset.semanticText;this.store.transact('تعديل الدلالة والوصول',project=>{const hit=findNodeGlobal(project,id);if(!hit)return;hit.node.semantic={tag:'div',role:'',ariaLabel:'',...(hit.node.semantic||{}),[key]:input.value}})}));
+    this.el.querySelectorAll('[data-semantic-key]').forEach(select=>select.addEventListener('change',()=>{const key=select.dataset.semanticKey;this.store.transact('تعديل الدلالة والوصول',project=>{const hit=findNodeGlobal(project,id);if(!hit)return;hit.node.semantic={tag:'div',role:'',ariaLabel:'',...(hit.node.semantic||{}),[key]:select.value}})}));
+    this.el.querySelector('[data-variable-bind]')?.addEventListener('change',event=>updateProps(this.store,id,{bindingVariable:event.target.value}));    this.el.querySelector('[data-media-select]')?.addEventListener('change',event=>{const assetId=event.target.value;if(assetId&&this.el.__assetService)this.el.__assetService.assignToNode(id,assetId)});
+    this.el.querySelector('[data-media-upload]')?.addEventListener('click',()=>{const input=document.createElement('input');input.type='file';input.accept=mediaAccept(mediaKindForNode(n));input.multiple=false;input.onchange=async()=>{const file=input.files?.[0];if(!file||!this.el.__assetService)return;const asset=await this.el.__assetService.addFile(file,{purpose:mediaKindForNode(n),attachTo:id,alt:file.name.replace(/\.[^.]+$/,'')});if(asset){this.render();this.store.setUI({selected:id})}};input.click()});
+    this.el.querySelector('[data-open-assets]')?.addEventListener('click',()=>document.getElementById('openAssetsBtn')?.click());
+
+    this.el.querySelectorAll('[data-cms-collection]').forEach(select=>select.addEventListener('change',()=>updateProps(this.store,id,{collectionId:select.value})));
+    this.el.querySelectorAll('[data-destination-for]').forEach(select=>select.addEventListener('change',()=>{const value=select.value;if(value==='__external__'){const current=this.store.find(id)?.node?.props?.url||'';updateProps(this.store,id,{url:/^https?:\/\//i.test(current)?current:'https://'});this.el.querySelector(`[data-external-wrap="${id}"]`)?.classList.remove('hidden')}else{updateProps(this.store,id,{url:value});this.el.querySelector(`[data-external-wrap="${id}"]`)?.classList.add('hidden')}}));
+
+    const applyColor=(key,value)=>{updateStyle(this.store,id,{[key]:value},this.device);if(this.store.project.settings.propagateDevices)propagateStyle(findNodeGlobal(this.store.project,id)?.node,this.device,{[key]:value});};
+    this.el.querySelectorAll('.color-field').forEach(wrap=>{
+      const text=wrap.querySelector('[data-color-text]'),native=wrap.querySelector('[data-color-native]'),preview=wrap.querySelector('[data-color-trigger]');
+      const fieldKey=wrap.dataset.colorKey||text?.dataset?.colorKey||native?.dataset?.colorKey||preview?.dataset?.colorKey||'color';
+      const sync=value=>{if(text)text.value=value;const validSolid=/^#[0-9a-f]{3}(?:[0-9a-f]{3})?$/i.test(String(value||'').trim())||/^rgba?\(/i.test(String(value||'').trim());if(native&&validSolid)native.value=nativeHex(value);if(preview)preview.style.background=value||nativeHex(value)};
+      native?.addEventListener('input',e=>{sync(e.target.value);applyColor(fieldKey,e.target.value)});
+      text?.addEventListener('change',e=>{const value=String(e.target.value||'').trim();sync(value);applyColor(fieldKey,value)});
+      preview?.addEventListener('click',()=>native?.click());
+      wrap.querySelector('[data-color-transparent]')?.addEventListener('click',()=>{sync('transparent');applyColor(fieldKey,'transparent')});
+      wrap.querySelectorAll('[data-color-value]').forEach(b=>b.addEventListener('click',()=>{const value=b.dataset.colorValue;sync(value);applyColor(fieldKey,value)}));
+      wrap.querySelector('[data-color-eyedropper]')?.addEventListener('click',async()=>{if(!globalThis.EyeDropper)return;try{const result=await new EyeDropper().open();if(result?.sRGBHex){sync(result.sRGBHex);applyColor(fieldKey,result.sRGBHex)}}catch{}});
+      wrap.querySelector('[data-color-mix]')?.addEventListener('click',()=>this.openColorMixer(fieldKey,wrap));
+      wrap.querySelector('[data-gradient-editor]')?.addEventListener('click',()=>this.openGradientEditor(fieldKey,wrap));
+
+    });
+    this.el.querySelectorAll('[data-device]').forEach(b=>b.onclick=()=>this.setDevice(b.dataset.device));
+    this.el.querySelectorAll('[data-layout-key]').forEach(select=>select.addEventListener('change',()=>{const key=select.dataset.layoutKey;const value=key==='wrap'?select.value==='1':select.value;this.store.transact('تعديل بنية العنصر',p=>{const hit=findNodeGlobal(p,id);if(hit)hit.node.layout={...(hit.node.layout||{}),[key]:value}})}));
+    this.el.querySelectorAll('[data-visibility-device]').forEach(input=>input.addEventListener('change',()=>this.store.transact('تعديل الظهور responsive',p=>{const hit=findNodeGlobal(p,id);if(hit)hit.node.visibility={...(hit.node.visibility||{}),[input.dataset.visibilityDevice]:input.checked}})));
+    this.el.querySelector('#propagate')?.addEventListener('change',e=>this.store.transact('إعداد مزامنة',p=>p.settings.propagateDevices=e.target.checked));this.el.querySelector('#toggleAdvanced')?.addEventListener('click',()=>{this.advanced=!this.advanced;this.render()});
+    this.el.querySelector('#codeBtn')?.addEventListener('click',()=>{const hit=this.store.find(id);if(hit)showModal(document.getElementById('modalHost'),{title:'كود العنصر',body:`<div class="field"><textarea readonly style="height:260px">${esc(nodeHtml(hit.node,this.store.project.theme,this.store.project,this.device))}</textarea></div>`})});
+  }
+}
+exports.Inspector = Inspector;
+});
+__modules.set("src/ui/modal.js",(exports,__require)=>{
+function showModal(host,{title,body,actions=[],wide=false}={}){const overlay=document.createElement('div');overlay.className='modal-overlay';const card=document.createElement('div');card.className=`modal-card${wide?' preview-card':''}`;const head=document.createElement('div');head.className='modal-head';const titleBox=document.createElement('div');titleBox.innerHTML=`<span class="eyebrow">بَنّاء</span><h3>${title||''}</h3>`;const close=document.createElement('button');close.className='close-btn';close.textContent='×';head.append(titleBox,close);const content=document.createElement('div');content.className='modal-body';content.innerHTML=body||'';const footer=document.createElement('div');footer.className='modal-actions';actions.forEach((a,i)=>{const b=document.createElement('button');b.className=a.kind==='primary'?'primary-btn':'secondary-btn';b.textContent=a.label;b.dataset.action=String(i);footer.appendChild(b)});card.append(head,content,footer);overlay.appendChild(card);host.appendChild(overlay);const remove=()=>overlay.remove();close.onclick=remove;overlay.onclick=e=>{if(e.target===overlay)remove();const b=e.target.closest('[data-action]');if(b)actions[Number(b.dataset.action)]?.onClick?.();};return overlay}
+const closeAll=host=>host.replaceChildren();
+exports.showModal = showModal;
+exports.closeAll = closeAll;
+});
+__modules.set("src/ui/panels.js",(exports,__require)=>{
+const {categories,searchDefinitions,nodeIcon} = __require("src/catalog/components.js");
+const {templates,materializeTemplate} = __require("src/catalog/templates.js");
+const {sections,materializeSection} = __require("src/catalog/sections.js");
+const {addNode,removeNode,duplicateNode,moveNode,setPageName} = __require("src/core/commands.js");
+const {triggers,actions,motions,makeInteraction,makeStep,upsertInteraction,removeInteraction,interactionsFor,triggerLabel,actionLabel,interactionCapabilities,normalizeInteraction} = __require("src/engine/interaction.js");
+const {findNodeGlobal,walk} = __require("src/core/model.js");
+const {dataUrlFromFile,escapeHtml,formatBytes} = __require("src/core/utils.js");
+const {insertSymbol} = __require("src/core/symbols.js");
+const {showModal} = __require("src/ui/modal.js");
+const {assetForNodeType} = __require("src/core/assets.js");
+const {applyDevicePresetTree,initializeDevicePresetsTree,deviceLabel} = __require("src/core/device-presets.js");
+class Panels{constructor(store){this.store=store;this.engine=null;this.category='all';this.search='';this.currentTab='elements'}
+mount(){document.querySelectorAll('[data-left-tab]').forEach(b=>b.addEventListener('click',()=>this.setTab(b.dataset.leftTab)));document.getElementById('elementSearch')?.addEventListener('input',e=>{this.search=e.target.value;this.renderLibrary()});document.getElementById('categoryTabs')?.addEventListener('click',e=>{const b=e.target.closest('[data-cat]');if(b){this.category=b.dataset.cat;this.renderLibrary()}});document.getElementById('openTemplatesBtn')?.addEventListener('click',()=>this.templatesModal());document.getElementById('openSectionsBtn')?.addEventListener('click',()=>this.sectionsModal());document.getElementById('openAssetsBtn')?.addEventListener('click',()=>this.assetsModal())}
+setTab(tab){this.currentTab=tab;this.store.setUI({leftTab:tab},{emit:false});document.querySelectorAll('.drawer-tab').forEach(b=>b.classList.toggle('active',b.dataset.leftTab===tab));for(const id of ['elements','layers','interaction'])document.getElementById(`${id}View`)?.classList.toggle('hidden',id!==tab);if(tab==='elements')this.renderLibrary();if(tab==='layers')this.renderLayers();if(tab==='interaction')this.renderInteractions()}
+renderLibrary(){const cat=document.getElementById('categoryTabs');cat.innerHTML=categories.map(([id,label])=>`<button class="category-chip ${id===this.category?'active':''}" data-cat="${id}">${label}</button>`).join('');const grid=document.getElementById('elementLibrary');const elements=searchDefinitions(this.search,this.category).map(d=>`<div class="element-card" draggable="true" data-type="${d.type}"><div class="element-thumb">${d.icon}</div><b>${d.label}</b><small>${d.description}</small><button class="add-element" data-add="${d.type}">إضافة لـ${deviceLabel(this.store.ui.device)}</button></div>`).join('');const symbols=(this.store.project.symbols?.definitions||[]).map(s=>`<div class="element-card symbol-card" data-symbol="${escapeHtml(s.id)}"><div class="element-thumb">◈</div><b>${escapeHtml(s.name)}</b><small>مكون مشترك • إصدار ${s.version||1}</small><button class="add-element" data-insert-symbol="${escapeHtml(s.id)}">إدراج</button></div>`).join('');grid.innerHTML=elements+(symbols?`<div class="library-section-title">المكونات المشتركة</div>${symbols}`:'');grid.onclick=e=>{const b=e.target.closest('[data-add]');if(b)this.engine.addElement(b.dataset.add);const symbol=e.target.closest('[data-insert-symbol]');if(symbol){insertSymbol(this.store,symbol.dataset.insertSymbol);this.engine.sync();this.renderLayers()}};grid.ondragstart=e=>{const c=e.target.closest('[data-type]');if(c)e.dataTransfer.setData('application/bunaa-type',c.dataset.type)}}
+renderLayers(){const page=this.store.activePage();const tree=document.getElementById('layerTree');tree.innerHTML=(page?.nodes||[]).map(n=>this.layerHtml(n,0)).join('')||'<div class="tips-card">لا توجد عناصر.</div>';tree.querySelectorAll('[data-select-layer]').forEach(b=>b.addEventListener('click',()=>this.store.setUI({selected:b.dataset.selectLayer})));tree.querySelectorAll('[data-layer-action]').forEach(b=>b.addEventListener('click',()=>{const a=b.dataset.layerAction,id=b.dataset.id;if(a==='up'||a==='down')moveNode(this.store,id,a);else if(a==='duplicate')duplicateNode(this.store,id);else if(a==='delete')removeNode(this.store,id);this.renderLayers()}))}
+layerHtml(n,depth){const label=escapeHtml(n.props?.label||n.props?.title||n.props?.text||n.type);return `<div class="layer-row ${n.id===this.store.ui.selected?'selected':''}" style="margin-right:${depth*12}px"><span class="layer-icon">${nodeIcon(n.type)}</span><button class="layer-name" data-select-layer="${n.id}">${label}<small>${n.type}</small></button><span class="layer-actions"><button data-layer-action="up" data-id="${n.id}">↑</button><button data-layer-action="down" data-id="${n.id}">↓</button><button data-layer-action="duplicate" data-id="${n.id}">＋</button><button data-layer-action="delete" data-id="${n.id}">×</button></span></div>${(n.children||[]).map(c=>this.layerHtml(c,depth+1)).join('')}`}
+renderInteractions(){
+  const box=document.getElementById('interactionPanel');
+  const id=this.store.ui.selected;
+  const hit=id?findNodeGlobal(this.store.project,id):null;
+  if(!hit){box.innerHTML='<div class="tips-card"><b>حدد عنصرًا أولًا</b><p>ثم أضف تفاعلًا. لكل نوع عنصر اقتراحات مختلفة.</p></div>';return}
+  const node=hit.node;
+  const list=interactionsFor(this.store.project,id);
+  const caps=interactionCapabilities(node.type);
+  const suggestedTriggers=caps.triggers||[];
+  const targetOptions=this.interactionTargets();
+  const presets=this.interactionPresets(node);
+  box.innerHTML=`
+    <div class="selected-target"><b>التفاعل: ${escapeHtml(node.props?.label||node.props?.title||node.props?.text||node.type)}</b><small>${escapeHtml(this.interactionDescription(node.type))}</small></div>
+    <div class="interaction-toolbar"><button class="primary-btn" id="newInteractionBtn">＋ تفاعل جديد</button><button class="secondary-btn" id="interactionModeBtn">${this.store.ui.interactionMode?'■ إيقاف التجربة':'▶ تجربة التفاعلات'}</button></div>
+    <section class="interaction-presets"><div class="mini-section-title"><b>اقتراحات لهذا العنصر</b><small>جاهزة بنقرة واحدة وتقدر تعدلها.</small></div>${presets.map((x,i)=>`<button class="interaction-preset" data-int-preset="${i}"><strong>${escapeHtml(x.label)}</strong><small>${escapeHtml(x.description)}</small></button>`).join('')}</section>
+    <section class="interaction-current"><div class="mini-section-title"><b>التفاعلات الحالية</b><small>${list.length} تفاعل</small></div>
+      ${list.length?list.map((item,index)=>`<article class="interaction-item ${item.enabled===false?'disabled':''}"><div class="interaction-item-main"><span class="interaction-badge">${index+1}</span><div><b>${escapeHtml(triggerLabel(item.trigger))}</b><small>${item.steps.length} إجراء • ${item.once?'مرة واحدة':'متكرر'}${item.condition?.type&&item.condition.type!=='always'?' • شرط':''}</small></div></div><div class="interaction-item-actions"><button data-int-toggle="${item.id}" title="تفعيل/تعطيل">${item.enabled===false?'○':'●'}</button><button data-int-edit="${item.id}">تعديل</button><button data-int-copy="${item.id}">نسخ</button><button data-remove-int="${item.id}" class="danger-btn">×</button></div></article>`).join(''):'<div class="tips-card">لا توجد تفاعلات بعد. ابدأ باقتراح جاهز أو اضغط «تفاعل جديد».</div>'}
+    </section>
+    <details class="interaction-help"><summary>ما الذي يمكنني فعله؟</summary><p>أحداث كثيرة + أكثر من إجراء داخل التفاعل نفسه + شروط + تأخير + أهداف مختلفة. مثال: عند الضغط ← أضف Class ← انتظر 300ms ← أظهر بطاقة ← اعرض رسالة.</p></details>`;
+  box.querySelector('#interactionModeBtn')?.addEventListener('click',()=>{this.store.setUI({interactionMode:!this.store.ui.interactionMode});this.engine.sync();this.renderInteractions()});
+  box.querySelector('#newInteractionBtn')?.addEventListener('click',()=>this.interactionModal(id));
+  box.querySelectorAll('[data-int-preset]').forEach(b=>b.addEventListener('click',()=>{const preset=presets[Number(b.dataset.intPreset)];if(!preset)return;const interaction=makeInteraction(id,preset.trigger,preset.steps?.[0]?.action||'motion',preset.steps?.[0]?.options||{});interaction.steps=preset.steps.map(step=>makeStep(step.action,step.options||{}));interaction.steps.forEach((step,i)=>{step.id=i===0?interaction.steps[0].id:step.id;step.delay=Number(preset.steps[i]?.delay)||0});interaction.action=interaction.steps[0].action;interaction.options=interaction.steps[0].options;this.store.transact('إضافة تفاعل جاهز',project=>upsertInteraction(project,interaction));this.store.setUI({interactionMode:true});this.engine.sync();this.renderInteractions()}));
+  box.querySelectorAll('[data-int-toggle]').forEach(b=>b.addEventListener('click',()=>{this.store.transact('تفعيل أو تعطيل تفاعل',project=>{const item=project.interactions?.find(x=>x.id===b.dataset.intToggle);if(item)item.enabled=item.enabled===false});this.engine.sync();this.renderInteractions()}));
+  box.querySelectorAll('[data-int-edit]').forEach(b=>b.addEventListener('click',()=>this.interactionModal(id,b.dataset.intEdit)));
+  box.querySelectorAll('[data-int-copy]').forEach(b=>b.addEventListener('click',()=>{const src=this.store.project.interactions?.find(x=>x.id===b.dataset.intCopy);if(!src)return;const copy=normalizeInteraction(src);copy.id=`int_${Date.now().toString(36)}_${Math.random().toString(36).slice(2,7)}`;copy.steps=copy.steps.map(step=>({...step,id:`step_${Math.random().toString(36).slice(2,8)}`}));this.store.transact('نسخ التفاعل',project=>upsertInteraction(project,copy));this.renderInteractions()}));
+  box.querySelectorAll('[data-remove-int]').forEach(b=>b.addEventListener('click',()=>{this.store.transact('حذف تفاعل',project=>removeInteraction(project,b.dataset.removeInt));this.engine.sync();this.renderInteractions()}));
+}
+interactionDescription(type){const map={button:'زر يدعم النقر والروابط والحركة والرسائل.',link:'رابط مناسب للتنقل والفتح الخارجي.',image:'صورة مناسبة للعرض والحركة والفتح.',input:'حقل مناسب للتركيز والكتابة والتغيير.',select:'قائمة مناسبة للتغيير والاختيار.',checkbox:'اختيار مناسب للتغيير والتبديل.',radio:'اختيار مناسب للتغيير والتبديل.',video:'وسائط تدعم التشغيل والإيقاف.',audio:'صوت يدعم التشغيل والإيقاف.',form:'نموذج يدعم الإرسال والأحداث.',faq:'سؤال شائع يمكن ربطه بالظهور أو الحركة.',default:'تفاعلات عامة يمكن تخصيصها بحرية.'};return map[type]||map.default}
+interactionPresets(node){const page=this.store.project.pages.find(p=>p.id!==this.store.project.activePageId);const target=page?.id||null;const type=node.type;const presets=[];if(['button','link','card','product','navbar'].includes(type)&&target)presets.push({label:'نقرة → صفحة',description:'انتقال فوري إلى صفحة أخرى.',trigger:'click',steps:[{action:'page',options:{targetId:node.id,pageId:target}}]});if(['button','link','card','image','product'].includes(type))presets.push({label:'مرور → تكبير',description:'تكبير لطيف أثناء مرور المؤشر.',trigger:'hover',steps:[{action:'motion',options:{targetId:node.id,motion:'zoom',duration:260}}]});if(['button','link','image','card'].includes(type))presets.push({label:'مرور → رفع',description:'إحساس بطاقة تفاعلية خفيف.',trigger:'hover',steps:[{action:'motion',options:{targetId:node.id,motion:'lift',duration:220}}]});if(['input','search','textarea'].includes(type))presets.push({label:'تركيز → وهج',description:'يوضح الحقل النشط للمستخدم.',trigger:'focus',steps:[{action:'motion',options:{targetId:node.id,motion:'glow',duration:320}}]});if(['input','search','textarea'].includes(type))presets.push({label:'كتابة → رسالة',description:'رسالة تظهر عند كتابة النص.',trigger:'input',steps:[{action:'toast',options:{targetId:node.id,message:'تم تحديث الحقل',toastDuration:1200}}]});if(type==='audio')presets.push({label:'نقرة → تشغيل',description:'تشغيل الصوت من العنصر.',trigger:'click',steps:[{action:'mediaPlay',options:{targetId:node.id}}]});if(type==='audio')presets.push({label:'إيقاف → رسالة',description:'رسالة عند الإيقاف.',trigger:'pause',steps:[{action:'toast',options:{targetId:node.id,message:'تم إيقاف الوسائط',toastDuration:1200}}]});if(['checkbox','radio','select','dropdown'].includes(type))presets.push({label:'تغيير → حركة',description:'حركة قصيرة بعد تغيير الاختيار.',trigger:'change',steps:[{action:'motion',options:{targetId:node.id,motion:'pulse',duration:260}}]});presets.push({label:'دخول الشاشة → ظهور',description:'تشغيل ظهور عندما يدخل العنصر الشاشة.',trigger:'enterViewport',steps:[{action:'motion',options:{targetId:node.id,motion:'fade',duration:520}}]});return presets.slice(0,6)}
+interactionTargets(){const out=[];for(const page of this.store.project.pages||[])walk(page.nodes,(node)=>out.push({id:node.id,label:`${page.name} — ${node.props?.label||node.props?.title||node.props?.text||node.type}`,type:node.type}));return out}
+interactionTargetOptions(selected){return [`<option value="">العنصر نفسه</option>`,...this.interactionTargets().map(t=>`<option value="${escapeHtml(t.id)}" ${selected===t.id?'selected':''}>${escapeHtml(t.label)}</option>`)].join('')}
+interactionStepFields(step){const o=step.options||{};const target=this.interactionTargetOptions(o.targetId);switch(step.action){case'motion':return `<div class="field-row"><div class="field"><label>الحركة</label><select data-step-key="motion">${motions.map(([v,l])=>`<option value="${v}" ${o.motion===v?'selected':''}>${l}</option>`).join('')}</select></div><div class="field"><label>المدة ms</label><input type="number" data-step-key="duration" value="${Number(o.duration)||420}"></div></div>`;case'page':return `<div class="field"><label>الصفحة</label><select data-step-key="pageId"><option value="">اختر صفحة…</option>${this.store.project.pages.map(pg=>`<option value="${pg.id}" ${o.pageId===pg.id?'selected':''}>${escapeHtml(pg.name)}</option>`).join('')}</select></div>`;case'url':return `<div class="field"><label>الرابط</label><input data-step-key="url" value="${escapeHtml(o.url||'')}" placeholder="https://example.com"></div><label class="check-row"><input type="checkbox" data-step-bool="newTab" ${o.newTab?'checked':''}> فتح في تبويب جديد</label>`;case'addClass':case'removeClass':case'toggleClass':return `<div class="field"><label>اسم الـClass</label><input data-step-key="className" value="${escapeHtml(o.className||'interactive')}" placeholder="highlight"></div>`;case'style':return `<div class="field-row"><div class="field"><label>خاصية CSS</label><input data-step-key="property" value="${escapeHtml(o.property||'color')}" placeholder="color"></div><div class="field"><label>القيمة</label><input data-step-key="value" value="${escapeHtml(o.value||'')}" placeholder="#5b5ce2"></div></div>`;case'setText':return `<div class="field"><label>النص الجديد</label><textarea data-step-key="text" rows="3">${escapeHtml(o.text||'')}</textarea></div>`;case'setAttribute':return `<div class="field-row"><div class="field"><label>اسم الخاصية</label><input data-step-key="attribute" value="${escapeHtml(o.attribute||'aria-label')}"></div><div class="field"><label>القيمة</label><input data-step-key="attributeValue" value="${escapeHtml(o.attributeValue||'')}"></div></div>`;case'removeAttribute':case'toggleAttribute':return `<div class="field"><label>اسم الخاصية</label><input data-step-key="attribute" value="${escapeHtml(o.attribute||'hidden')}"></div>`;case'toast':return `<div class="field"><label>الرسالة</label><input data-step-key="message" value="${escapeHtml(o.message||'تم التنفيذ')}"></div><div class="field"><label>المدة ms</label><input type="number" data-step-key="toastDuration" value="${Number(o.toastDuration)||2200}"></div>`;case'copy':return `<div class="field"><label>النص المراد نسخه</label><textarea data-step-key="text" rows="2">${escapeHtml(o.text||'')}</textarea><small>اتركه فارغًا لنسخ قيمة الحقل نفسه.</small></div>`;case'openAsset':case'downloadAsset':case'setMedia':{const kind=this.store.project.assets.map(a=>a.kind);return `<div class="field"><label>الوسيط المحمّل من المشروع</label><select data-step-key="assetId"><option value="">اختر وسيطًا…</option>${this.store.project.assets.filter(a=>step.action==='setMedia'?['image','video','audio'].includes(a.kind):true).map(a=>`<option value="${escapeHtml(a.id)}" ${o.assetId===a.id?'selected':''}>${escapeHtml(a.name)} — ${escapeHtml(a.originalName)} (${escapeHtml(a.kind)})</option>`).join('')}</select></div><label class="check-row"><input type="checkbox" data-step-bool="newTab" ${o.newTab!==false?'checked':''}> فتح في تبويب جديد</label><small class="step-hint">الملف يجب أن يكون مرفوعًا إلى مكتبة المشروع أولًا. أسماء الوسائط تكون تلقائيًا مثل img1 وvideo1 وaudio1.</small>`};default:return `<small class="step-hint">هذا الإجراء يعتمد على العنصر المستهدف أو المتصفح.</small>`}}
+interactionTriggerOptions(sourceId,selected){const type=this.store.find(sourceId)?.node?.type||'default';const caps=interactionCapabilities(type);const preferred=triggers.filter(([v])=>caps.triggers.includes(v));const rest=triggers.filter(([v])=>!caps.triggers.includes(v));return `<optgroup label="مناسب لهذا العنصر">${preferred.map(([v,l])=>`<option value="${v}" ${selected===v?'selected':''}>${l}</option>`).join('')}</optgroup><optgroup label="كل المحفزات">${rest.map(([v,l])=>`<option value="${v}" ${selected===v?'selected':''}>${l}</option>`).join('')}</optgroup>`}
+interactionActionOptions(sourceId,selected){const type=this.store.find(sourceId)?.node?.type||'default';const caps=interactionCapabilities(type);const preferred=actions.filter(([v])=>caps.actions.includes(v));const rest=actions.filter(([v])=>!caps.actions.includes(v));return `<optgroup label="أفعال مناسبة لهذا العنصر">${preferred.map(([v,l])=>`<option value="${v}" ${selected===v?'selected':''}>${l}</option>`).join('')}</optgroup><optgroup label="كل الأفعال">${rest.map(([v,l])=>`<option value="${v}" ${selected===v?'selected':''}>${l}</option>`).join('')}</optgroup>`}
+interactionStepHtml(step,index){return `<article class="interaction-step" data-step-id="${escapeHtml(step.id)}"><div class="step-head"><span>الإجراء ${index+1}</span><div><button type="button" data-step-up="${escapeHtml(step.id)}">↑</button><button type="button" data-step-down="${escapeHtml(step.id)}">↓</button><button type="button" data-step-remove="${escapeHtml(step.id)}">×</button></div></div><div class="field-row"><div class="field"><label>الإجراء</label><select data-step-action>${this.interactionActionOptions(this.store.ui.selected,step.action)}</select></div><div class="field"><label>العنصر المستهدف</label><select data-step-target>${this.interactionTargetOptions(step.options?.targetId)}</select></div></div><div class="field"><label>تأخير قبل التنفيذ ms</label><input type="number" data-step-delay min="0" max="10000" value="${Number(step.delay)||0}"></div><div class="step-fields">${this.interactionStepFields(step)}</div></article>`}
+readInteractionStep(article,sourceId){const step=makeStep(article.querySelector('[data-step-action]')?.value||'motion');step.id=article.dataset.stepId||step.id;step.delay=Math.max(0,Math.min(10000,Number(article.querySelector('[data-step-delay]')?.value)||0));step.options.targetId=article.querySelector('[data-step-target]')?.value||sourceId;article.querySelectorAll('[data-step-key]').forEach(input=>{const key=input.dataset.stepKey;step.options[key]=input.type==='number'?Number(input.value||0):input.value});article.querySelectorAll('[data-step-bool]').forEach(input=>{step.options[input.dataset.stepBool]=input.checked});return step}
+interactionModal(sourceId,interactionId=null){
+  const existing=interactionId?this.store.project.interactions?.find(x=>x.id===interactionId):null;
+  const i=existing?normalizeInteraction(existing):makeInteraction(sourceId,'click','motion',{targetId:sourceId});
+  const body=`<div class="interaction-editor"><div class="field-row"><div class="field"><label>المحفّز</label><select id="ieTrigger">${this.interactionTriggerOptions(sourceId,i.trigger)}</select></div><div class="field"><label>الشرط</label><select id="ieCondition"><option value="always">دائمًا</option><option value="not-empty">القيمة ليست فارغة</option><option value="visible">العنصر ظاهر</option><option value="value">قيمة محددة</option><option value="device">جهاز محدد</option><option value="key">مفتاح محدد</option></select></div></div><div id="ieConditionFields"></div><div class="field-row"><label class="check-row"><input id="ieOnce" type="checkbox" ${i.once?'checked':''}> مرة واحدة فقط</label><label class="check-row"><input id="iePrevent" type="checkbox" ${i.preventDefault?'checked':''}> منع السلوك الافتراضي</label><label class="check-row"><input id="ieStop" type="checkbox" ${i.stopPropagation?'checked':''}> منع انتشار الحدث</label></div><div class="field"><label>مهلة بين التشغيلات ms</label><input id="ieCooldown" type="number" min="0" max="60000" value="${Number(i.cooldown)||0}"></div><div class="interaction-steps-head"><div><b>سلسلة الإجراءات</b><small>أضف أكثر من إجراء، ورتّبها بالسهمين.</small></div><button id="ieAddStep" class="secondary-btn" type="button">＋ إجراء</button></div><div id="ieSteps">${i.steps.map((step,index)=>this.interactionStepHtml(step,index)).join('')}</div></div>`;
+  const modal=showModal(document.getElementById('modalHost'),{title:interactionId?'تعديل التفاعل':'إنشاء تفاعل متقدم',body,wide:true,actions:[{label:'إلغاء'},{label:'حفظ التفاعل',kind:'primary',onClick:()=>this.saveInteractionModal(modal,sourceId,interactionId)}]});
+  const renderCondition=()=>{const type=modal.querySelector('#ieCondition')?.value||'always';const box=modal.querySelector('#ieConditionFields');if(type==='value')box.innerHTML=`<div class="field-row"><div class="field"><label>القيمة</label><input id="ieCondValue" value="${escapeHtml(i.condition?.value||'')}"></div><div class="field"><label>المقارنة</label><select id="ieCondOperator"><option value="contains">تحتوي</option><option value="equals">تساوي</option><option value="not-equals">لا تساوي</option><option value="starts">تبدأ بـ</option><option value="ends">تنتهي بـ</option></select></div></div>`;else if(type==='device')box.innerHTML=`<div class="field"><label>الجهاز</label><select id="ieCondValue"><option value="desktop">Desktop</option><option value="tablet">Tablet</option><option value="mobile">Mobile</option></select></div>`;else if(type==='key')box.innerHTML=`<div class="field"><label>اسم المفتاح</label><input id="ieCondValue" value="${escapeHtml(i.condition?.value||'Enter')}"></div>`;else box.innerHTML='';if(i.condition?.type===type){const v=modal.querySelector('#ieCondValue');if(v)v.value=i.condition.value||v.value||'';const op=modal.querySelector('#ieCondOperator');if(op)op.value=i.condition.operator||'contains'}};
+  modal.querySelector('#ieCondition').value=i.condition?.type||'always';renderCondition();modal.querySelector('#ieCondition').addEventListener('change',renderCondition);
+  modal.querySelector('#ieAddStep').addEventListener('click',()=>{const step=makeStep('motion',{targetId:sourceId});const holder=modal.querySelector('#ieSteps');holder.insertAdjacentHTML('beforeend',this.interactionStepHtml(step,holder.children.length));this.bindInteractionStepUi(modal,sourceId)});
+  this.bindInteractionStepUi(modal,sourceId);return modal;
+}
+bindInteractionStepUi(modal,sourceId){
+  modal.querySelectorAll('[data-step-action]').forEach(select=>{select.onchange=()=>{const article=select.closest('.interaction-step');const step=this.readInteractionStep(article,sourceId);article.querySelector('.step-fields').innerHTML=this.interactionStepFields(step);this.bindInteractionStepUi(modal,sourceId)}});
+  modal.querySelectorAll('[data-step-remove]').forEach(b=>b.onclick=()=>b.closest('.interaction-step')?.remove());
+  modal.querySelectorAll('[data-step-up]').forEach(b=>b.onclick=()=>{const a=b.closest('.interaction-step');const prev=a?.previousElementSibling;if(prev)a.parentElement.insertBefore(a,prev)});
+  modal.querySelectorAll('[data-step-down]').forEach(b=>b.onclick=()=>{const a=b.closest('.interaction-step');const next=a?.nextElementSibling;if(next)a.parentElement.insertBefore(next,a)});
+}
+saveInteractionModal(modal,sourceId,interactionId){
+  const steps=[...modal.querySelectorAll('.interaction-step')].map(article=>this.readInteractionStep(article,sourceId));if(!steps.length)steps.push(makeStep('motion',{targetId:sourceId}));
+  const conditionType=modal.querySelector('#ieCondition')?.value||'always';const value=modal.querySelector('#ieCondValue')?.value||'';const operator=modal.querySelector('#ieCondOperator')?.value||'contains';
+  const item={id:interactionId||undefined,sourceId,trigger:modal.querySelector('#ieTrigger')?.value||'click',enabled:interactionId?(this.store.project.interactions?.find(x=>x.id===interactionId)?.enabled!==false):true,once:modal.querySelector('#ieOnce')?.checked||false,preventDefault:modal.querySelector('#iePrevent')?.checked||false,stopPropagation:modal.querySelector('#ieStop')?.checked||false,cooldown:Number(modal.querySelector('#ieCooldown')?.value)||0,condition:{type:conditionType,value,operator},steps,action:steps[0].action,options:steps[0].options};
+  this.store.transact(interactionId?'تحديث تفاعل':'إنشاء تفاعل',project=>upsertInteraction(project,item));this.store.setUI({interactionMode:true});this.engine.sync();modal.remove();this.renderInteractions();
+}
+templatesModal(){const body=`<div class="template-grid">${templates.map((t,i)=>`<article class="template-card"><div class="template-preview"><div class="mock-block mock-wide"></div><div class="mock-block"></div><div class="mock-block mock-short"></div></div><div class="template-info"><b>${escapeHtml(t.name)}</b><small>${escapeHtml(t.description)}</small><div class="template-actions"><button data-add-template="${i}">إضافة قسم</button><button class="apply" data-apply-template="${i}">تطبيق كامل</button></div></div></article>`).join('')}</div>`;const modal=showModal(document.getElementById('modalHost'),{title:'القوالب الجاهزة',body});modal.querySelectorAll('[data-apply-template]').forEach(b=>b.onclick=()=>{const t=materializeTemplate(templates[Number(b.dataset.applyTemplate)]);const device=this.store.ui.device||'desktop';this.store.transact('تطبيق قالب',p=>{p.pages=t.pages.map(page=>({...page,nodes:initializeDevicePresetsTree(page.nodes||[],device)}));p.activePageId=p.pages[0].id;p.meta.name=t.name;p.interactions=[]});this.store.setUI({selected:null});modal.remove()});modal.querySelectorAll('[data-add-template]').forEach(b=>b.onclick=()=>{const t=materializeTemplate(templates[Number(b.dataset.addTemplate)]);const device=this.store.ui.device||'desktop';this.store.transact('إضافة قسم من قالب',p=>{const page=p.pages.find(x=>x.id===p.activePageId);if(page)page.nodes.push(...initializeDevicePresetsTree(t.pages[0].nodes||[],device))});modal.remove()})}
+assetsModal(){
+  const selectedId=this.store.ui.selected; const selectedNode=selectedId?findNodeGlobal(this.store.project,selectedId)?.node:null; const preferred=selectedNode?assetForNodeType(selectedNode.type):'';
+  const assets=this.assetService?this.assetService.list():this.store.project.assets||[];
+  const body=`<div class="asset-toolbar"><div class="field"><label>بحث</label><input id="assetSearch" placeholder="اسم الملف، الاسم التلقائي، tag…"></div><div class="field"><label>النوع</label><select id="assetKind"><option value="">كل الأنواع</option><option value="image" ${preferred==='image'?'selected':''}>صور</option><option value="video" ${preferred==='video'?'selected':''}>فيديو</option><option value="audio" ${preferred==='audio'?'selected':''}>صوت</option><option value="document" ${preferred==='document'?'selected':''}>ملفات</option></select></div><div class="field"><label>رفع إلى المشروع</label><input id="assetUploader" type="file" multiple accept="image/*,audio/*,video/*,font/*,.pdf,.doc,.docx,.txt,.zip,.woff,.woff2,.ttf,.otf"></div></div><div class="asset-upload-note"><b>الرفع = حفظ داخل المشروع.</b><span>سيُعاد تسمية الملف تلقائيًا مثل <code>img1.png</code>، <code>video1.mp4</code>، <code>audio1.mp3</code>…</span></div><div id="assetList" class="asset-grid">${assets.map(a=>this.assetCardHtml(a)).join('')||'<div class="tips-card">لا توجد وسائط بعد.</div>'}</div>`;
+  const modal=showModal(document.getElementById('modalHost'),{title:'مكتبة الوسائط',body,wide:true});
+  const bind=()=>{modal.querySelectorAll('[data-asset-select]').forEach(card=>card.onclick=()=>{const asset=this.store.project.assets.find(x=>x.id===card.dataset.assetSelect);const id=this.store.ui.selected;if(asset&&id){this.assetService?.assignToNode(id,asset.id);modal.remove();this.engine.sync();this.renderLayers();this.store.setUI({selected:id})}});modal.querySelectorAll('[data-asset-edit]').forEach(btn=>btn.onclick=e=>{e.stopPropagation();const asset=this.store.project.assets.find(x=>x.id===btn.dataset.assetEdit);if(!asset)return;const alt=prompt('الوصف البديل',asset.alt||asset.name);const folder=prompt('المجلد',asset.folder||asset.kind);const tags=prompt('Tags مفصولة بفاصلة',(asset.tags||[]).join(', '));if(alt!==null)this.assetService?.update(asset.id,{alt:alt.trim(),folder:(folder||asset.kind).trim()||asset.kind,tags:String(tags??'').split(',').map(x=>x.trim()).filter(Boolean)});modal.remove();this.assetsModal()});modal.querySelectorAll('[data-asset-remove]').forEach(btn=>btn.onclick=e=>{e.stopPropagation();if(confirm('حذف الوسيط من المشروع؟')){this.assetService?.remove(btn.dataset.assetRemove);modal.remove();this.assetsModal()}})};
+  bind();
+  const refresh=()=>{const list=this.assetService?this.assetService.list({query:modal.querySelector('#assetSearch')?.value||'',kind:modal.querySelector('#assetKind')?.value||''}):[];modal.querySelector('#assetList').innerHTML=list.map(a=>this.assetCardHtml(a)).join('')||'<div class="tips-card">لا توجد نتائج.</div>';bind()};
+  modal.querySelector('#assetSearch')?.addEventListener('input',refresh);modal.querySelector('#assetKind')?.addEventListener('change',refresh);
+  modal.querySelector('#assetUploader')?.addEventListener('change',async e=>{const files=[...(e.target.files||[])];if(!files.length)return;for(const file of files){try{await this.assetService?.addFile(file,{attachTo:null,alt:file.name.replace(/\.[^.]+$/,'')})}catch(err){console.warn('Asset upload failed',err)}}modal.remove();this.assetsModal()});
+  return modal;
+}
+assetCardHtml(asset){
+  const preview=asset.kind==='image'?`<img src="${escapeHtml(asset.data)}" alt="${escapeHtml(asset.alt||asset.name)}">`:asset.kind==='video'?`<div class="asset-file-icon">▶ VIDEO</div>`:asset.kind==='audio'?`<div class="asset-file-icon">♫ AUDIO</div>`:`<div class="asset-file-icon">${escapeHtml((asset.extension||asset.type.split('/').pop()||'FILE').toUpperCase())}</div>`;
+  return `<div class="asset-card" data-asset-select="${escapeHtml(asset.id)}">${preview}<div class="asset-card-meta"><b>${escapeHtml(asset.name)}.${escapeHtml(asset.extension||'bin')}</b><small>${escapeHtml(asset.originalName||'')} • ${escapeHtml(formatBytes(asset.size))}</small><small>${escapeHtml(asset.kind)} • ${escapeHtml(asset.folder)}${asset.tags?.length?' • '+escapeHtml(asset.tags.join(' • ')):''}</small></div><div class="asset-card-actions"><button type="button" data-asset-edit="${escapeHtml(asset.id)}">تحرير</button><button type="button" data-asset-remove="${escapeHtml(asset.id)}">×</button></div></div>`}
+
+pageSettingsModal(pageId){
+  const page=this.store.project.pages.find(item=>item.id===pageId); if(!page)return null;
+  const parentOptions=`<option value="">جذر الموقع</option>${this.store.project.pages.filter(item=>item.id!==pageId).map(item=>`<option value="${escapeHtml(item.id)}" ${page.parentId===item.id?'selected':''}>${escapeHtml(item.name)}</option>`).join('')}`;
+  const body=`<div class="page-settings-grid"><div class="field"><label>اسم الصفحة</label><input id="pageName" value="${escapeHtml(page.name)}"></div><div class="field"><label>المسار</label><input id="pagePath" value="${escapeHtml(page.path||`/${page.slug}`)}"></div><div class="field"><label>الصفحة الأب</label><select id="pageParent">${parentOptions}</select></div><div class="field"><label>عنوان SEO</label><input id="pageSeoTitle" value="${escapeHtml(page.seo?.title||page.name)}"></div><div class="field"><label>وصف SEO</label><textarea id="pageSeoDescription">${escapeHtml(page.seo?.description||'')}</textarea></div><div class="field"><label>Canonical</label><input id="pageCanonical" value="${escapeHtml(page.seo?.canonical||'')}"></div><label class="check-row"><input id="pageShowInNav" type="checkbox" ${page.settings?.showInNav!==false?'checked':''}> إظهار في التنقل</label><label class="check-row"><input id="pageHidden" type="checkbox" ${page.settings?.hidden?'checked':''}> إخفاء الصفحة</label><label class="check-row"><input id="pageNoIndex" type="checkbox" ${page.seo?.noIndex?'checked':''}> منع الفهرسة</label><label class="check-row"><input id="pageTemplate" type="checkbox" ${page.settings?.template?'checked':''}> استخدام كقالب</label></div><div class="tips-card"><b>حالة الصفحة</b><p>الصفحة جزء من Document Model ويمكن أن يكون لها مسار وSEO وحالة تنقل مستقلة عن ترتيبها في المحرر.</p></div>`;
+  const modal=showModal(document.getElementById('modalHost'),{title:`إعدادات: ${escapeHtml(page.name)}`,body,wide:true,actions:[{label:'إلغاء'},{label:'حفظ التغييرات',kind:'primary',onClick:()=>this.savePageSettings(modal,pageId)}]});
+  return modal;
+}
+savePageSettings(modal,pageId){
+  const val=id=>modal.querySelector(id)?.value||''; const checked=id=>Boolean(modal.querySelector(id)?.checked);
+  this.store.transact('تحديث إعدادات الصفحة',project=>{const page=project.pages.find(item=>item.id===pageId);if(!page)return;page.name=String(val('#pageName')||page.name).trim();page.slug=String(page.slug||page.name).trim();page.path=String(val('#pagePath')||`/${page.slug}`).trim();if(!page.path.startsWith('/'))page.path='/'+page.path;page.parentId=String(val('#pageParent')||'')||null;page.seo={...(page.seo||{}),title:String(val('#pageSeoTitle')||page.name).trim(),description:val('#pageSeoDescription'),canonical:val('#pageCanonical'),noIndex:checked('#pageNoIndex')};page.settings={...(page.settings||{}),showInNav:checked('#pageShowInNav'),hidden:checked('#pageHidden'),template:checked('#pageTemplate')};});
+}
+
+sectionsModal(){const body=`<div class="section-grid">${sections.map(s=>`<article class="section-card"><div class="section-preview"><div></div><div></div><div></div></div><div><b>${escapeHtml(s.name)}</b><small>${escapeHtml(s.description)}</small><button data-add-section="${s.id}" class="primary-btn">إضافة إلى الصفحة</button></div></article>`).join('')}</div>`;const modal=showModal(document.getElementById('modalHost'),{title:'أقسام جاهزة',body,wide:true});modal.querySelectorAll('[data-add-section]').forEach(b=>b.onclick=()=>{const node=materializeSection(b.dataset.addSection);this.store.transact('إضافة قسم جاهز',p=>p.pages.find(x=>x.id===p.activePageId)?.nodes.push(...initializeDevicePresetsTree([node],this.store.ui.device||'desktop')));modal.remove()});return modal}
+
+pagesModal(){
+  const pages=this.store.project.pages;
+  const body=`<div class="list-stack">${pages.map((page,index)=>`<div class="page-row ${page.id===this.store.project.activePageId?'active':''}"><div><b>${escapeHtml(page.name)}${index===0?' • الرئيسية':''}</b><small>${escapeHtml(page.path||('/'+page.slug))} • ${page.parentId?'فرعية من: '+escapeHtml(pages.find(parent=>parent.id===page.parentId)?.name||'صفحة'): 'جذر'} • ${(page.nodes||[]).length} عناصر</small></div><div class="page-row-actions"><button data-page-open="${page.id}">فتح</button><button data-page-copy="${page.id}">نسخ</button><button data-page-up="${page.id}" ${index===0?'disabled':''}>↑</button><button data-page-down="${page.id}" ${index===pages.length-1?'disabled':''}>↓</button><button data-page-home="${page.id}" ${index===0?'disabled':''}>⌂</button><button data-page-settings="${page.id}">SEO</button><button data-page-rename="${page.id}">تسمية</button><button data-page-delete="${page.id}" ${pages.length<=1?'disabled':''}>×</button></div></div>`).join('')}</div><div class="modal-actions"><button id="newPageBtn" class="primary-btn" type="button">＋ صفحة جديدة</button></div>`;
+  const modal=showModal(document.getElementById('modalHost'),{title:'إدارة صفحات الموقع',body});
+  modal.querySelector('#newPageBtn').onclick=()=>{const name=prompt('اسم الصفحة','صفحة جديدة');if(name?.trim()){this.store.addPage(name.trim());modal.remove();this.pagesModal()}};
+  modal.querySelectorAll('[data-page-open]').forEach(b=>b.onclick=()=>{this.store.setActivePage(b.dataset.pageOpen);modal.remove()});
+  modal.querySelectorAll('[data-page-settings]').forEach(b=>b.onclick=()=>{modal.remove();this.pageSettingsModal(b.dataset.pageSettings)});
+  modal.querySelectorAll('[data-page-copy]').forEach(b=>b.onclick=()=>{this.store.duplicatePage(b.dataset.pageCopy);modal.remove();this.pagesModal()});
+  modal.querySelectorAll('[data-page-up]').forEach(b=>b.onclick=()=>{this.store.movePage(b.dataset.pageUp,'up');modal.remove();this.pagesModal()});
+  modal.querySelectorAll('[data-page-down]').forEach(b=>b.onclick=()=>{this.store.movePage(b.dataset.pageDown,'down');modal.remove();this.pagesModal()});
+  modal.querySelectorAll('[data-page-home]').forEach(b=>b.onclick=()=>{this.store.setHomePage(b.dataset.pageHome);modal.remove();this.pagesModal()});
+  modal.querySelectorAll('[data-page-rename]').forEach(b=>b.onclick=()=>{const page=this.store.project.pages.find(p=>p.id===b.dataset.pageRename);const name=prompt('الاسم الجديد',page?.name||'');if(name?.trim())setPageName(this.store,b.dataset.pageRename,name.trim());modal.remove();this.pagesModal()});
+  modal.querySelectorAll('[data-page-delete]').forEach(b=>b.onclick=()=>{if(confirm('حذف الصفحة؟'))this.store.deletePage(b.dataset.pageDelete);modal.remove();this.pagesModal()});
+  return modal;
+}
+}
+exports.Panels = Panels;
+});
+const __app=__require("src/main.js");if(typeof window!=='undefined'&&__app?.app)window.__BUNAA_APP=__app.app;})();

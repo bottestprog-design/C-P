@@ -1,0 +1,99 @@
+{
+  "checks": [
+    "standalone app boots and creates a project",
+    "intrinsic button width avoids full-canvas stretch",
+    "multi-stop linear/radial gradient editor, live preview, save, application preview, and site export",
+    "canvas min-height grows and shrinks with content and manually positioned elements",
+    "mouse drag persists x/y movement",
+    "all 8 pointer resize grips work; opposite edges stay anchored; reverse drag shrinks; undo/redo works",
+    "tablet element positions are stored independently from desktop positions",
+    "responsive desktop/tablet/mobile preview renders and executes click interactions without editor handles",
+    "secondary toolbar actions remain reachable and dropdown closes by action or Escape",
+    "website export ZIP downloads, opens, passes CRC, and contains expected web files",
+    "existing layout regression harness passes in an isolated page",
+    "no topbar/document horizontal overflow at 1440, 1180, 900, 560, 390, and 320px"
+  ],
+  "responsive": [
+    {
+      "width": 1440,
+      "height": 54,
+      "scrollWidth": 1440,
+      "clientWidth": 1440,
+      "overflowX": "visible",
+      "documentWidth": 1440
+    },
+    {
+      "width": 1180,
+      "height": 54,
+      "scrollWidth": 1180,
+      "clientWidth": 1180,
+      "overflowX": "visible",
+      "documentWidth": 1180
+    },
+    {
+      "width": 900,
+      "height": 88,
+      "scrollWidth": 900,
+      "clientWidth": 900,
+      "overflowX": "visible",
+      "documentWidth": 900
+    },
+    {
+      "width": 560,
+      "height": 123,
+      "scrollWidth": 560,
+      "clientWidth": 560,
+      "overflowX": "visible",
+      "documentWidth": 560
+    },
+    {
+      "width": 390,
+      "height": 123,
+      "scrollWidth": 390,
+      "clientWidth": 390,
+      "overflowX": "visible",
+      "documentWidth": 390
+    },
+    {
+      "width": 320,
+      "height": 158,
+      "scrollWidth": 320,
+      "clientWidth": 320,
+      "overflowX": "visible",
+      "documentWidth": 320
+    }
+  ],
+  "layoutHarness": [
+    {
+      "label": "open",
+      "root": 1440,
+      "canvas": 800,
+      "viewport": 800,
+      "scroll": true
+    },
+    {
+      "label": "left-closed",
+      "root": 1440,
+      "canvas": 1120,
+      "viewport": 1120,
+      "scroll": true
+    },
+    {
+      "label": "both-closed",
+      "root": 1440,
+      "canvas": 1440,
+      "viewport": 1440,
+      "scroll": true
+    },
+    {
+      "label": "reopened",
+      "root": 1440,
+      "canvas": 800,
+      "viewport": 800,
+      "scroll": true
+    }
+  ],
+  "exportedFiles": 10,
+  "pageErrors": [],
+  "consoleErrors": []
+}

@@ -1,0 +1,14 @@
+PASS 49 source modules present
+PASS 49 static module references resolve
+PASS index.html: 280 static HTML elements, 96 IDs, no duplicates
+PASS Bunaa.html: 280 static HTML elements, 96 IDs, no duplicates
+PASS index.html and Bunaa.html are synchronized
+PASS V30 release metadata is consistent and all 9 secondary toolbar actions remain in More
+PASS 21 existing toolbar action IDs retained
+PASS offline build script present
+PASS node --check: bundle syntax valid
+PASS direct mouse move/resize hooks present in source modules
+PASS all eight north/east/south/west/corner resize grips are present
+PASS real iframe preview, desktop/tablet/mobile controls, refresh and pop-out hooks present
+PASS multi-stop linear/radial gradient and auto-content-height contracts present
+RESULT: 13 integrity groups passed
